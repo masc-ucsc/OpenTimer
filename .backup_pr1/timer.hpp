@@ -36,7 +36,6 @@ class Timer {
     // Builder
     Timer& set_num_threads(unsigned);
     Timer& read_celllib(std::filesystem::path, std::optional<Split> = {});
-    Timer& read_celllibs(std::filesystem::path, std::optional<Split> = {});
     Timer& read_verilog(std::filesystem::path);
     Timer& read_spef(std::filesystem::path);
     Timer& read_sdc(std::filesystem::path);
@@ -290,8 +289,6 @@ class Timer {
     Test& _insert_test(Arc&);
     Clock& _create_clock(const std::string&, Pin&, float);
     Clock& _create_clock(const std::string&, float);
-    Clock& _create_clock(const std::string&, Pin&, float, std::array<float, MAX_TRAN>);
-    Clock& _create_clock(const std::string&, float, std::array<float, MAX_TRAN>);
 
     std::optional<float> _report_at(const std::string&, Split, Tran);
     std::optional<float> _report_rat(const std::string&, Split, Tran);
