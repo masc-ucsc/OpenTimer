@@ -35,6 +35,7 @@
 #include <string>
 #include <variant>
 #include <optional>
+#include <bit>
 #include "os.hpp"
 
 namespace tf {
