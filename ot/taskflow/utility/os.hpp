@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <cstdio>
 #include <string>
+#include <thread>
+#include <new>
 
 #define TF_OS_LINUX 0
 #define TF_OS_DRAGONFLY 0
@@ -89,6 +91,22 @@
 #define TF_OS_UNIX 1
 #endif
 
+// ----------------------------------------------------------------------------
+// cpu pause implementation
+// ----------------------------------------------------------------------------
+
+#if defined(_MSC_VER)
+    #include <intrin.h>
+    #define TF_CPU_PAUSE() _mm_pause()
+#elif defined(__i386__) || defined(__x86_64__)
+    #include <immintrin.h>
+    #define TF_CPU_PAUSE() _mm_pause()
+#elif defined(__arm__) || defined(__aarch64__)
+    #define TF_CPU_PAUSE() __asm__ __volatile__("yield" ::: "memory")
+#else
+    #define TF_CPU_PAUSE() std::this_thread::yield()
+#endif
+
 
 //-----------------------------------------------------------------------------
 // Cache line alignment
@@ -96,7 +114,6 @@
 #if defined(__i386__) || defined(__x86_64__)
   #define TF_CACHELINE_SIZE 64
 #elif defined(__powerpc64__)
-  // TODO
   // This is the L1 D-cache line size of our Power7 machines.
   // Need to check if this is appropriate for other PowerPC64 systems.
   #define TF_CACHELINE_SIZE 128
@@ -120,24 +137,66 @@
 
 
 
-//-----------------------------------------------------------------------------
-// pause
-//-----------------------------------------------------------------------------
-//#if __has_include (<immintrin.h>)
-//  #define TF_HAS_MM_PAUSE 1
-//  #include <immintrin.h>
-//#endif
-
 namespace tf {
 
-// Struct: CachelineAligned
-// Due to prefetch, we typically do 2x cacheline for the alignment.
+/**
+@class CachelineAligned
+
+@brief class to ensure cacheline-aligned storage for an object.
+
+@tparam T The type of the stored object.
+
+This utility class aligns the stored object `data` to twice the size of a cacheline.
+The alignment improves performance by optimizing data access in cache-sensitive scenarios.
+
+@code{.cpp}
+// create two integers on two separate cachelines to avoid false sharing
+tf::CachelineAligned<int> counter1;
+tf::CachelineAligned<int> counter2;
+
+// two threads access the two counters without false sharing
+std::thread t1([&]{ counter1.get() = 1; });
+std::thread t2([&]{ counter2.get() = 2; });
+t1.join();
+t2.join();
+@endcode
+*/
 template <typename T>
-struct CachelineAligned {
-  alignas (2*TF_CACHELINE_SIZE) T data;
+class CachelineAligned {
+  public:
+  /**
+   * @brief The stored object, aligned to twice the cacheline size.
+   */
+  alignas (TF_CACHELINE_SIZE) T data;
+
+  /**
+   * @brief accesses the underlying object
+   * 
+   * @return a reference to the underlying object.
+   */
+  T& get() { return data; }
+  
+  /**
+   * @brief accesses the underlying object as a constant reference
+   * 
+   * @return a constant reference to the underlying object.
+   */
+  const T& get() const { return data; }
 };
 
-// Function: get_env
+/**
+@brief retrieves the value of an environment variable
+
+This function fetches the value of an environment variable by name.
+If the variable is not found, it returns an empty string.
+
+@param str The name of the environment variable to retrieve.
+@return The value of the environment variable as a string, or an empty string if not found.
+
+@attention The implementation differs between Windows and POSIX platforms:
+ - On Windows, it uses `_dupenv_s` to fetch the value.
+ - On POSIX, it uses `std::getenv`.
+*/
 inline std::string get_env(const std::string& str) {
 #ifdef _MSC_VER
   char *ptr = nullptr;
@@ -156,7 +215,18 @@ inline std::string get_env(const std::string& str) {
 #endif
 }
 
-// Function: has_env
+/**
+@brief checks whether an environment variable is defined
+
+This function determines if a specific environment variable exists in the current environment.
+
+@param str The name of the environment variable to check.
+@return `true` if the environment variable exists, `false` otherwise.
+
+@attention The implementation differs between Windows and POSIX platforms:
+ - On Windows, it uses `_dupenv_s` to check for the variable's presence.
+ - On POSIX, it uses `std::getenv` to check for the variable's presence.
+*/
 inline bool has_env(const std::string& str) {
 #ifdef _MSC_VER
   char *ptr = nullptr;
@@ -175,13 +245,22 @@ inline bool has_env(const std::string& str) {
 #endif
 }
 
-// Procedure: relax_cpu
-//inline void relax_cpu() {
-//#ifdef TF_HAS_MM_PAUSE
-//  _mm_pause();
-//#endif
-//}
+/**
+@fn pause
 
+This function is used in spin-wait loops to hint the CPU that the current 
+thread is in a busy-wait state. 
+It helps reduce power consumption and improves performance on hyper-threaded processors 
+by preventing the CPU from consuming unnecessary cycles while waiting. 
+It is particularly useful in low-contention scenarios, where the thread 
+is likely to quickly acquire the lock or condition it's waiting for, 
+avoiding an expensive context switch. 
+On modern x86 processors, this instruction can be invoked using @c __builtin_ia32_pause() 
+in GCC/Clang or @c _mm_pause() in MSVC. 
+In non-x86 architectures, alternative mechanisms such as yielding the CPU may be used instead.
+
+*/
+inline void pause() { TF_CPU_PAUSE(); }
 
 
 }  // end of namespace tf -----------------------------------------------------

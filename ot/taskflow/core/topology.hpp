@@ -4,59 +4,100 @@ namespace tf {
 
 // ----------------------------------------------------------------------------
 
-// class: TopologyBase
-class TopologyBase {
+/**
+@private
+*/
+class Topology {
 
   friend class Executor;
+  friend class Subflow;
+  friend class Runtime;
+  friend class NonpreemptiveRuntime;
   friend class Node;
 
   template <typename T>
   friend class Future;
-
-  protected:
-
-  std::atomic<bool> _is_cancelled { false };
-};
-
-// ----------------------------------------------------------------------------
-
-// class: AsyncTopology
-class AsyncTopology : public TopologyBase {
-};
-
-// ----------------------------------------------------------------------------
-
-// class: Topology
-class Topology : public TopologyBase {
-
-  friend class Executor;
-  friend class Runtime;
-
+  
   public:
 
-    template <typename P, typename C>
-    Topology(Taskflow&, P&&, C&&);
+  Topology(Taskflow&);
+
+  virtual ~Topology() = default;
+
+  bool cancelled() const;
+
+  virtual bool predicate() = 0;
+  virtual void on_finish() = 0;
 
   private:
 
-    Taskflow& _taskflow;
+  Taskflow& _taskflow;
 
-    std::promise<void> _promise;
+  std::promise<void> _promise;
+  
+  std::atomic<size_t> _join_counter {0};
+  std::atomic<ESTATE::underlying_type> _estate {ESTATE::NONE};
 
-    SmallVector<Node*> _sources;
+  std::exception_ptr _exception_ptr {nullptr};
 
-    std::function<bool()> _pred;
-    std::function<void()> _call;
-
-    std::atomic<size_t> _join_counter {0};
+  void _carry_out_promise();
 };
 
 // Constructor
-template <typename P, typename C>
-Topology::Topology(Taskflow& tf, P&& p, C&& c):
-  _taskflow(tf),
-  _pred {std::forward<P>(p)},
-  _call {std::forward<C>(c)} {
+inline Topology::Topology(Taskflow& tf):
+  _taskflow(tf) {
 }
 
+// Procedure
+inline void Topology::_carry_out_promise() {
+  if(_exception_ptr) {
+    auto e = _exception_ptr;
+    _exception_ptr = nullptr;
+    _promise.set_exception(e);
+  }
+  else {
+    _promise.set_value();
+  }
+}
+
+// Function: cancelled
+inline bool Topology::cancelled() const {
+  return _estate.load(std::memory_order_relaxed) & ESTATE::CANCELLED;
+}
+
+// ----------------------------------------------------------------------------
+
+
+/**
+@private
+*/
+template <typename P, typename C>
+class DerivedTopology : public Topology {
+
+  using PredicateType = std::decay_t<P>;
+  using CallbackType  = std::decay_t<C>;
+  
+  public:
+
+  DerivedTopology(Taskflow& tf, P&& pred, C&& clbk) :
+    Topology(tf), _pred(std::forward<P>(pred)), _clbk(std::forward<C>(clbk)) {
+  }
+    
+  bool predicate() override final { return _pred(); }
+  void on_finish() override final { _clbk(); }   
+
+  private:
+
+  PredicateType _pred;       // predicate, of type bool()
+  CallbackType  _clbk;       // callback, of type void()
+};
+
 }  // end of namespace tf. ----------------------------------------------------
+
+
+
+
+
+
+
+

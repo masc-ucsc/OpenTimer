@@ -9,6 +9,7 @@
 
 namespace tf {
 
+
 // ----------------------------------------------------------------------------
 // Class Definition: Pipeflow
 // ----------------------------------------------------------------------------
@@ -82,7 +83,7 @@ class Pipeflow {
   @brief stops the pipeline scheduling
 
   Only the first pipe can call this method to stop the pipeline.
-  Others have no effect.
+  Calling stop from other pipes will throw exception.
   */
   void stop() {
     if(_pipe != 0) {
@@ -93,6 +94,7 @@ class Pipeflow {
 
   private:
 
+  // Regular data
   size_t _line;
   size_t _pipe;
   size_t _token;
@@ -122,14 +124,14 @@ enum class PipeType : int {
 /**
 @class Pipe
 
-@brief class to create a stage in a task-parallel pipeline 
+@brief class to create a pipe object for a pipeline stage
 
 @tparam C callable type
 
 A pipe represents a stage of a pipeline. A pipe can be either
 @em parallel direction or @em serial direction (specified by tf::PipeType)
-and is associated with a callable to invoke by the pipeline scheduler.
-The callable must take a referenced tf::Pipeflow object in its argument:
+and is coupled with a callable to invoke by the pipeline scheduler.
+The callable must take a referenced tf::Pipeflow object in the first argument:
 
 @code{.cpp}
 Pipe{PipeType::SERIAL, [](tf::Pipeflow&){}}
@@ -202,8 +204,7 @@ class Pipe {
   @brief assigns a new callable to the pipe
 
   @tparam U callable type
-  @param callable a callable object constructible from the callable type
-                  of this pipe
+  @param callable a callable object constructible from std::function<void(tf::Pipeflow&)>
 
   Assigns a new callable to the pipe with universal forwarding.
   */
@@ -226,19 +227,17 @@ class Pipe {
 /**
 @class Pipeline
 
-@brief class to create a task-parallel pipeline scheduling framework
+@brief class to create a pipeline scheduling framework
 
 @tparam Ps pipe types
 
-A tf::Pipeline is a composable graph object for users to create a
-<i>task-parallel pipeline scheduling framework</i> using a module task in a taskflow.
-Unlike the conventional pipeline programming frameworks (e.g., Intel TBB),
-%Taskflow's pipeline algorithm does not provide any data abstraction,
-which often restricts users from optimizing data layouts in their applications,
-but a flexible framework for users to customize their application data
-atop our pipeline scheduling.
-The following code creates a pipeline of four parallel lines to schedule
-tokens through three serial pipes:
+A tf::Pipeline is a composable graph object that allows users to parallelize an application
+using pipeline parallelism.
+Unlike conventional pipeline programming frameworks (e.g., Intel TBB),
+tf::Pipeline does not provide any data abstraction but a task-parallel framework
+for users to customize their data layout when leveraging pipeline parallelism.
+The following code creates a pipeline with four parallel lines that schedule
+five tokens through three pipes of a serial-parallel-serial direction:
 
 @code{.cpp}
 tf::Taskflow taskflow;
@@ -263,7 +262,7 @@ tf::Pipeline pipeline(num_lines,
       buffer[pf.line()][pf.pipe()] = pf.token();
     }
   }},
-  tf::Pipe{tf::PipeType::SERIAL, [&buffer] (tf::Pipeflow& pf) {
+  tf::Pipe{tf::PipeType::PARALLEL, [&buffer] (tf::Pipeflow& pf) {
     // propagate the previous result to this pipe by adding one
     buffer[pf.line()][pf.pipe()] = buffer[pf.line()][pf.pipe()-1] + 1;
   }},
@@ -289,21 +288,10 @@ task.precede(stop);
 executor.run(taskflow).wait();
 @endcode
 
-The pipeline graph schedules five tokens over
-four parallel lines in a circular fashion, as depicted below:
+The five tokens will be scheduled across four parallel lines in a circular fashion,
+as depicted below:
 
-@code{.shell-session}
-o -> o -> o
-|    |    |
-v    v    v
-o -> o -> o
-|    |    |
-v    v    v
-o -> o -> o
-|    |    |
-v    v    v
-o -> o -> o
-@endcode
+@dotfile images/pipeline_our_structure.dot
 
 At each pipe stage, the program propagates the result to the next pipe
 by adding one to the result stored in a custom data storage, @c buffer.
@@ -378,7 +366,7 @@ class Pipeline {
   The Function returns the number of pipes given by the user
   upon the construction of the pipeline.
   */
-  constexpr size_t num_pipes() const noexcept;
+  constexpr size_t num_pipes() const;
 
   /**
   @brief resets the pipeline
@@ -401,9 +389,10 @@ class Pipeline {
   @brief obtains the graph object associated with the pipeline construct
 
   This method is primarily used as an opaque data structure for creating
-  a module task of this pipeline.
+  a module task of the this pipeline.
   */
   Graph& graph();
+
 
   private:
 
@@ -416,11 +405,11 @@ class Pipeline {
   std::vector<std::array<Line, sizeof...(Ps)>> _lines;
   std::vector<Task> _tasks;
   std::vector<Pipeflow> _pipeflows;
-
+  
   template <size_t... I>
   auto _gen_meta(std::tuple<Ps...>&&, std::index_sequence<I...>);
 
-  void _on_pipe(Pipeflow&, Runtime&);
+  void _on_pipe(Pipeflow&, NonpreemptiveRuntime&);
   void _build();
 };
 
@@ -483,7 +472,7 @@ size_t Pipeline<Ps...>::num_lines() const noexcept {
 
 // Function: num_pipes
 template <typename... Ps>
-constexpr size_t Pipeline<Ps...>::num_pipes() const noexcept {
+constexpr size_t Pipeline<Ps...>::num_pipes() const {
   return sizeof...(Ps);
 }
 
@@ -509,7 +498,7 @@ void Pipeline<Ps...>::reset() {
     _pipeflows[l]._pipe = 0;
     _pipeflows[l]._line = l;
   }
-
+  
   _lines[0][0].join_counter.store(0, std::memory_order_relaxed);
 
   for(size_t l=1; l<num_lines(); l++) {
@@ -533,13 +522,13 @@ void Pipeline<Ps...>::reset() {
 
 // Procedure: _on_pipe
 template <typename... Ps>
-void Pipeline<Ps...>::_on_pipe(Pipeflow& pf, Runtime& rt) {
+void Pipeline<Ps...>::_on_pipe(Pipeflow& pf, NonpreemptiveRuntime& rt) {
   visit_tuple([&](auto&& pipe){
     using callable_t = typename std::decay_t<decltype(pipe)>::callable_t;
     if constexpr (std::is_invocable_v<callable_t, Pipeflow&>) {
       pipe._callable(pf);
     }
-    else if constexpr(std::is_invocable_v<callable_t, Pipeflow&, Runtime&>) {
+    else if constexpr(std::is_invocable_v<callable_t, Pipeflow&, NonpreemptiveRuntime&>) {
       pipe._callable(pf, rt);
     }
     else {
@@ -564,7 +553,7 @@ void Pipeline<Ps...>::_build() {
   // line task
   for(size_t l = 0; l < num_lines(); l++) {
 
-    _tasks[l + 1] = fb.emplace([this, l] (tf::Runtime& rt) mutable {
+    _tasks[l + 1] = fb.emplace([this, l] (tf::NonpreemptiveRuntime& rt) mutable {
 
       auto pf = &_pipeflows[l];
 
@@ -573,7 +562,8 @@ void Pipeline<Ps...>::_build() {
       _lines[pf->_line][pf->_pipe].join_counter.store(
         static_cast<size_t>(_meta[pf->_pipe].type), std::memory_order_relaxed
       );
-
+      
+      // First pipe does all jobs of initialization and token dependencies
       if (pf->_pipe == 0) {
         pf->_token = _num_tokens;
         if (pf->_stop = false, _on_pipe(*pf, rt); pf->_stop == true) {
@@ -623,7 +613,7 @@ void Pipeline<Ps...>::_build() {
         ) {
         retval[n++] = 0;
       }
-
+      
       // notice that the task index starts from 1
       switch(n) {
         case 2: {
@@ -631,18 +621,19 @@ void Pipeline<Ps...>::_build() {
           goto pipeline;
         }
         case 1: {
+          // downward dependency 
           if (retval[0] == 1) {
             pf = &_pipeflows[n_l];
           }
+          // forward dependency
           goto pipeline;
         }
       }
-    }).name("rt-"s + std::to_string(l));
+    }).name("nprt-"s + std::to_string(l));
 
     _tasks[0].precede(_tasks[l+1]);
   }
 }
-
 
 // ----------------------------------------------------------------------------
 // Class Definition: ScalablePipeline
@@ -744,7 +735,7 @@ The above example creates a pipeline graph that schedules five tokens over
 four parallel lines in a circular fashion, first going through three serial pipes
 and then five serial pipes:
 
-@code{.shell-session}
+@code{.bash}
 # initial construction of three serial pipes
 o -> o -> o
 |    |    |
@@ -789,6 +780,7 @@ class ScalablePipeline {
   struct Line {
     std::atomic<size_t> join_counter;
   };
+
 
   public:
 
@@ -935,7 +927,7 @@ class ScalablePipeline {
   @brief obtains the graph object associated with the pipeline construct
 
   This method is primarily used as an opaque data structure for creating
-  a module task of this pipeline.
+  a module task of the this pipeline.
   */
   Graph& graph();
 
@@ -950,7 +942,7 @@ class ScalablePipeline {
   std::vector<Pipeflow> _pipeflows;
   std::unique_ptr<Line[]> _lines;
 
-  void _on_pipe(Pipeflow&, Runtime&);
+  void _on_pipe(Pipeflow&, NonpreemptiveRuntime&);
   void _build();
 
   Line& _line(size_t, size_t);
@@ -985,27 +977,33 @@ ScalablePipeline<P>::ScalablePipeline(size_t num_lines, P first, P last) :
 
 // move constructor
 template <typename P>
-ScalablePipeline<P>::ScalablePipeline(ScalablePipeline&& rhs) :
-  _graph      {std::move(rhs._graph)},
+ScalablePipeline<P>::ScalablePipeline(ScalablePipeline&& rhs):
   _num_tokens {rhs._num_tokens},
   _pipes      {std::move(rhs._pipes)},
-  _tasks      {std::move(rhs._tasks)},
   _pipeflows  {std::move(rhs._pipeflows)},
   _lines      {std::move(rhs._lines)} {
 
+  _graph.clear();
+  _tasks.resize(_pipeflows.size()+1);
   rhs._num_tokens = 0;
+  rhs._tasks.clear();
+  _build();
 }
 
 // move assignment operator
 template <typename P>
 ScalablePipeline<P>& ScalablePipeline<P>::operator = (ScalablePipeline&& rhs) {
-  _graph      = std::move(rhs._graph);
   _num_tokens = rhs._num_tokens;
   _pipes      = std::move(rhs._pipes);
-  _tasks      = std::move(rhs._tasks);
   _pipeflows  = std::move(rhs._pipeflows);
   _lines      = std::move(rhs._lines);
+
+  _graph.clear();
+  _tasks.resize(_pipeflows.size()+1);
+
   rhs._num_tokens = 0;
+  rhs._tasks.clear();
+  _build();
   return *this;
 }
 
@@ -1115,14 +1113,14 @@ void ScalablePipeline<P>::reset() {
 
 // Procedure: _on_pipe
 template <typename P>
-void ScalablePipeline<P>::_on_pipe(Pipeflow& pf, Runtime& rt) {
+void ScalablePipeline<P>::_on_pipe(Pipeflow& pf, NonpreemptiveRuntime& rt) {
     
   using callable_t = typename pipe_t::callable_t;
 
   if constexpr (std::is_invocable_v<callable_t, Pipeflow&>) {
     _pipes[pf._pipe]->_callable(pf);
   }
-  else if constexpr(std::is_invocable_v<callable_t, Pipeflow&, Runtime&>) {
+  else if constexpr(std::is_invocable_v<callable_t, Pipeflow&, NonpreemptiveRuntime&>) {
     _pipes[pf._pipe]->_callable(pf, rt);
   }
   else {
@@ -1137,7 +1135,7 @@ void ScalablePipeline<P>::_build() {
   using namespace std::literals::string_literals;
 
   FlowBuilder fb(_graph);
-
+  
   // init task
   _tasks[0] = fb.emplace([this]() {
     return static_cast<int>(_num_tokens % num_lines());
@@ -1145,8 +1143,8 @@ void ScalablePipeline<P>::_build() {
 
   // line task
   for(size_t l = 0; l < num_lines(); l++) {
-
-    _tasks[l + 1] = fb.emplace([this, l] (tf::Runtime& rt) mutable {
+    
+    _tasks[l + 1] = fb.emplace([this, l] (tf::NonpreemptiveRuntime& rt) mutable {
 
       auto pf = &_pipeflows[l];
 
@@ -1156,6 +1154,7 @@ void ScalablePipeline<P>::_build() {
         static_cast<size_t>(_pipes[pf->_pipe]->type()), std::memory_order_relaxed
       );
 
+      // First pipe does all jobs of initialization and token dependencies
       if (pf->_pipe == 0) {
         pf->_token = _num_tokens;
         if (pf->_stop = false, _on_pipe(*pf, rt); pf->_stop == true) {
@@ -1168,11 +1167,11 @@ void ScalablePipeline<P>::_build() {
       else {
         _on_pipe(*pf, rt);
       }
-
+      
       size_t c_f = pf->_pipe;
       size_t n_f = (pf->_pipe + 1) % num_pipes();
       size_t n_l = (pf->_line + 1) % num_lines();
-
+      
       pf->_pipe = n_f;
 
       // ---- scheduling starts here ----
@@ -1219,29 +1218,11 @@ void ScalablePipeline<P>::_build() {
           goto pipeline;
         }
       }
-    }).name("rt-"s + std::to_string(l));
+    }).name("nprt-"s + std::to_string(l));
 
     _tasks[0].precede(_tasks[l+1]);
   }
 }
-
-// ----------------------------------------------------------------------------
-// Goal: make examples/data_parallel_pipeline.cpp work!
-// ----------------------------------------------------------------------------
-
-// TODO: Zhicheng (5/27)
-// 1. come up with the interface of DataPipeline
-
-//class DataPipeline : public Pipeline {
-//
-//};
-
-// 2. come up with the interface of DataPipe
-// template <typename From, typename To, typename C>
-// class DataPipe : public Pipe <C> {
-//
-// }
-
 
 }  // end of namespace tf -----------------------------------------------------
 

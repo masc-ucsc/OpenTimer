@@ -767,7 +767,7 @@ struct RuleNameMapBeg
     : pegtl::seq<TAO_PEGTL_STRING("*NAME_MAP"), RuleDontCare> {};
 
 template <> struct Action<RuleNameMapBeg> {
-  template <typename Input> static void apply(const Input &in, Spef &d) {}
+  template <typename Input> static void apply(const Input & /*in*/, Spef & /*d*/) {}
 };
 
 struct RuleNameMap : pegtl::seq<pegtl::not_at<TAO_PEGTL_STRING("*PORTS")>,
@@ -791,7 +791,7 @@ template <> struct Action<RuleNameMap> {
 struct RulePortBeg : pegtl::seq<TAO_PEGTL_STRING("*PORTS"), RuleDontCare> {};
 
 template <> struct Action<RulePortBeg> {
-  template <typename Input> static void apply(const Input &in, Spef &d) {}
+  template <typename Input> static void apply(const Input & /*in*/, Spef & /*d*/) {}
 };
 
 struct RulePort
@@ -859,7 +859,7 @@ using RuleVar = pegtl::until<pegtl::at<pegtl::sor<pegtl::space, pegtl::eof>>>;
 struct RuleConnBeg : pegtl::seq<TAO_PEGTL_STRING("*CONN")> {};
 
 template <> struct Action<RuleConnBeg> {
-  template <typename Input> static void apply(const Input &in, Spef &d) {}
+  template <typename Input> static void apply(const Input & /*in*/, Spef & /*d*/) {}
 };
 
 struct RuleConn
@@ -921,7 +921,7 @@ template <> struct Action<RuleConn> {
 struct RuleCapBeg : pegtl::seq<TAO_PEGTL_STRING("*CAP")> {};
 
 template <> struct Action<RuleCapBeg> {
-  template <typename Input> static void apply(const Input &in, Spef &d) {}
+  template <typename Input> static void apply(const Input & /*in*/, Spef & /*d*/) {}
 };
 
 struct RuleCapGround : pegtl::seq<pegtl::plus<pegtl::digit>, RuleSpace, RuleVar,
@@ -950,7 +950,7 @@ template <> struct Action<RuleCapCouple> {
 struct RuleResBeg : pegtl::seq<TAO_PEGTL_STRING("*RES")> {};
 
 template <> struct Action<RuleResBeg> {
-  template <typename Input> static void apply(const Input &in, Spef &d) {}
+  template <typename Input> static void apply(const Input & /*in*/, Spef & /*d*/) {}
 };
 
 struct RuleRes : pegtl::seq<pegtl::plus<pegtl::digit>, RuleSpace, RuleVar,
@@ -980,13 +980,13 @@ template <> struct Action<RuleNetBeg> {
 struct RuleNetEnd : pegtl::seq<TAO_PEGTL_STRING("*END")> {};
 
 template <> struct Action<RuleNetEnd> {
-  template <typename Input> static void apply(const Input &in, Spef &d) {}
+  template <typename Input> static void apply(const Input & /*in*/, Spef & /*d*/) {}
 };
 
 struct RuleInputEnd : pegtl::star<pegtl::any> {};
 
 template <> struct Action<RuleInputEnd> {
-  template <typename Input> static void apply(const Input &in, Spef &d) {
+  template <typename Input> static void apply(const Input &in, Spef & /*d*/) {
     if (in.size() != 0) {
       throw pegtl::parse_error("Unrecognized token", in);
     }
@@ -1100,8 +1100,8 @@ inline bool Spef::read(const std::filesystem::path &p) {
     tao::pegtl::parse<spef::RuleSpef, spef::Action, spef::Control>(in, *this);
     return true;
   } catch (const tao::pegtl::parse_error &e) {
-    const auto &p = e.position_object();
-    error = Error{e.what(), p.line, p.column};
+    const auto &pos = e.position_object();
+    error = Error{e.what(), pos.line, pos.column};
     return false;
   }
 }
