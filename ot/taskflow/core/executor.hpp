@@ -1613,13 +1613,6 @@ void Executor::_schedule_graph_with_parent(
   parent->_join_counter.fetch_add(num_srcs, std::memory_order_relaxed);
   _bulk_schedule(worker, beg, num_srcs);
 }
-  
-template <typename I>
-void Executor::_schedule_graph_with_parent(Worker& worker, I beg, I end, Node* parent) {
-  auto send = _set_up_graph(beg, end, parent->_topology, parent);
-  parent->_join_counter.fetch_add(send - beg, std::memory_order_relaxed);
-  _schedule(worker, beg, send);
-}
 
 // Function: _update_cache
 TF_FORCE_INLINE void Executor::_update_cache(Worker& worker, Node*& cache, Node* node) {

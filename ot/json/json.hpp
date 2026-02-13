@@ -10528,41 +10528,6 @@ class binary_reader
                 return get_cbor_binary(b) && sax->binary(b);
             }
 
-            // Binary data (0x00..0x17 bytes follow)
-            case 0x40:
-            case 0x41:
-            case 0x42:
-            case 0x43:
-            case 0x44:
-            case 0x45:
-            case 0x46:
-            case 0x47:
-            case 0x48:
-            case 0x49:
-            case 0x4A:
-            case 0x4B:
-            case 0x4C:
-            case 0x4D:
-            case 0x4E:
-            case 0x4F:
-            case 0x50:
-            case 0x51:
-            case 0x52:
-            case 0x53:
-            case 0x54:
-            case 0x55:
-            case 0x56:
-            case 0x57:
-            case 0x58: // Binary data (one-byte uint8_t for n follows)
-            case 0x59: // Binary data (two-byte uint16_t for n follow)
-            case 0x5A: // Binary data (four-byte uint32_t for n follow)
-            case 0x5B: // Binary data (eight-byte uint64_t for n follow)
-            case 0x5F: // Binary data (indefinite length)
-            {
-                binary_t b;
-                return get_cbor_binary(b) && sax->binary(b);
-            }
-
             // UTF-8 string (0x00..0x17 bytes follow)
             case 0x60:
             case 0x61:

@@ -680,8 +680,6 @@ class Future : public std::future<T>  {
     bool cancel();
 
   private:
-    
-    std::weak_ptr<Topology> _topology;
 
     std::weak_ptr<Topology> _topology;
 

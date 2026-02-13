@@ -8,6 +8,8 @@
 #include <ot/utility/tokenizer.hpp>
 #include <ot/utility/index.hpp>
 #include <ot/utility/os.hpp>
+#include <ot/utility/scope_guard.hpp>
+#include <ot/utility/unique_guard.hpp>
 #include <ot/utility/CLI11.hpp>
 
 // Miscellaneous
