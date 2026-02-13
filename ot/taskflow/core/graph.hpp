@@ -21,6 +21,7 @@
 #include "wsq.hpp"
 
 
+
 /**
 @file graph.hpp
 @brief graph include file
@@ -31,6 +32,7 @@ namespace tf {
 // ----------------------------------------------------------------------------
 // Class: Graph
 // ----------------------------------------------------------------------------
+
 
 /**
 @class Graph
@@ -44,7 +46,7 @@ class to interact with the executor through taskflow composition.
 
 A graph object is move-only.
 */
-class Graph {
+class Graph : public std::vector<std::unique_ptr<Node>> {
 
   friend class Node;
   friend class FlowBuilder;
@@ -265,7 +267,7 @@ class Node : public NodeBase {
 
     std::function<void()> work;
   };
-
+  
   // runtime work handle
   struct Runtime {
 
@@ -670,6 +672,14 @@ inline void Node::_set_up_join_counter() {
   _join_counter.store(c, std::memory_order_relaxed);
 }
 
+// Procedure: _rethrow_exception
+inline void Node::_rethrow_exception() {
+  if(_exception_ptr) {
+    auto e = _exception_ptr;
+    _exception_ptr = nullptr;
+    std::rethrow_exception(e);
+  }
+}
 
 // Function: _acquire_all
 inline bool Node::_acquire_all(SmallVector<Node*>& nodes) {

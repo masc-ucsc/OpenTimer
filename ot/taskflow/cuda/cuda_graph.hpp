@@ -161,6 +161,8 @@ inline size_t cuda_graph_get_num_edges(cudaGraph_t graph, cudaGraphNode_t* from,
   return num_edges;
 }
 
+
+
 /**
 @brief Handles compatibility with CUDA <= 12.x and CUDA 13
 * @param node

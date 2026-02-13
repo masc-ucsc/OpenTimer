@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "macros.hpp"
+
 #include <algorithm>
 #include <cassert>
 #include <cstddef>

@@ -104,6 +104,21 @@ auto make_for_each_index_task(B b, E e, S s, C c, P part = P()){
       return;
     }
 
+    size_t W = rt.executor().num_workers();
+    size_t N = distance(beg, end, inc);
+
+    // only myself - no need to spawn another graph
+    if(W <= 1 || N <= part.chunk_size()) {
+      part([=]() mutable {
+        for(size_t x=0; x<N; x++, beg+=inc) {
+          c(beg);
+        }
+      })();
+      return;
+    }
+
+    PreemptionGuard preemption_guard(rt);
+    
     if(N < W) {
       W = N;
     }

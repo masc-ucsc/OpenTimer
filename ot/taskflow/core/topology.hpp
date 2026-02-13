@@ -9,6 +9,11 @@ namespace tf {
 */
 class Topology {
 
+};
+
+// class: Topology
+class Topology {
+
   friend class Executor;
   friend class Subflow;
   friend class Runtime;
@@ -28,6 +33,8 @@ class Topology {
 
   virtual bool predicate() = 0;
   virtual void on_finish() = 0;
+
+    bool cancelled() const;
 
   private:
 

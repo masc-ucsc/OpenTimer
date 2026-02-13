@@ -92,6 +92,26 @@ class Pipeflow {
     _stop = true;
   }
 
+  /**
+  @brief queries the number of deferrals
+  */
+  size_t num_deferrals() const {
+    return _num_deferrals;
+  }
+
+  /**
+  @brief pushes token in _dependents
+
+  Only the first pipe can call this method to defer the current
+  scheduling token to the given token.
+  */
+  void defer(size_t token) {
+    if(_pipe != 0) {
+      TF_THROW("only the first pipe can defer the current scheduling token");
+    }
+    _dependents.insert(token);
+  }
+  
   private:
 
   // Regular data
@@ -99,6 +119,11 @@ class Pipeflow {
   size_t _pipe;
   size_t _token;
   bool   _stop;
+  
+  // Data field for token dependencies
+  size_t _num_deferrals; 
+  std::unordered_set<size_t> _dependents; 
+
 };
 
 // ----------------------------------------------------------------------------
@@ -411,6 +436,9 @@ class Pipeline {
 
   void _on_pipe(Pipeflow&, NonpreemptiveRuntime&);
   void _build();
+  void _check_dependents(Pipeflow&);
+  void _construct_deferred_tokens(Pipeflow&);
+  void _resolve_token_dependencies(Pipeflow&); 
 };
 
 // constructor
@@ -497,6 +525,9 @@ void Pipeline<Ps...>::reset() {
   for(size_t l = 0; l<num_lines(); l++) {
     _pipeflows[l]._pipe = 0;
     _pipeflows[l]._line = l;
+    
+    _pipeflows[l]._num_deferrals = 0;
+    _pipeflows[l]._dependents.clear();
   }
   
   _lines[0][0].join_counter.store(0, std::memory_order_relaxed);
@@ -537,6 +568,123 @@ void Pipeline<Ps...>::_on_pipe(Pipeflow& pf, NonpreemptiveRuntime& rt) {
   }, _pipes, pf._pipe);
 }
 
+// Procedure: _check_dependents
+// Check and remove invalid dependents after on_pipe
+// For example, users may defer a pipeflow to multiple tokens,
+// and we need to remove invalid tokens.
+//   12.defer(7);   // valid only if 7 is deferred, or invalid otherwise
+//   12.defer(16);  // 16 is valid 
+template <typename... Ps>
+void Pipeline<Ps...>::_check_dependents(Pipeflow& pf) {
+  //if (pf._dependents.size()) {
+  ++pf._num_deferrals;
+  
+  for (auto it = pf._dependents.begin(); it != pf._dependents.end();) {
+ 
+    // valid (e.g., 12.defer(16)) 
+    if (*it >= _num_tokens) {
+      _token_dependencies[*it].push_back(pf._token);
+      _longest_deferral = std::max(_longest_deferral, *it);
+      ++it;
+    }
+    // valid or invalid (e.g., 12.defer(7))
+    else {
+      auto pit = _deferred_tokens.find(*it);
+      
+      // valid (e.g., 7 is deferred)
+      if (pit != _deferred_tokens.end()) {
+        _token_dependencies[*it].push_back(pf._token);
+        ++it;
+      }
+
+      // invalid (e.g., 7 is finished - this this 12.defer(7) is dummy)
+      else {
+        it = pf._dependents.erase(it);
+      }
+    }
+  }
+}
+
+// Procedure: _construct_deferred_tokens
+// Construct a data structure for a deferred token
+// 
+// For example, 
+// 12.defer(7); 12.defer(16);
+// After _check_dependents, 12 needs to be deferred,
+// so we will construct a data structure for 12 using hashmap:
+// {key: 12, value: DeferredPipeflow of 12}
+template <typename... Ps>
+void Pipeline<Ps...>::_construct_deferred_tokens(Pipeflow& pf) {
+  
+  //auto res = _deferred_tokens.emplace(
+  //  pf._token, DeferredPipeflow{pf._token, pf._num_deferrals, std::move(pf._dependents)}
+  //);
+  
+  // construct the deferred pipeflow with zero copy
+  //auto res = _deferred_tokens.emplace(
+  _deferred_tokens.emplace(
+    std::piecewise_construct,
+    std::forward_as_tuple(pf._token),
+    std::forward_as_tuple(
+      pf._token, pf._num_deferrals, std::move(pf._dependents)
+    )
+  );
+
+  //assert(res.second == true);
+}
+
+// Procedure: _resolve_token_dependencies
+// Resolve dependencies for tokens that defer to current token
+// 
+// For example,
+// 12.defer(16);
+// 13.defer(16);
+// _token_dependencies will have the entry
+// {key: 16, value: std::vector{12, 13}} 
+//
+// When 16 finishes, we need to remove 16 from 12's and 13's 
+// individual_dependents
+template <typename... Ps>
+void Pipeline<Ps...>::_resolve_token_dependencies(Pipeflow& pf) {
+
+  if (auto it = _token_dependencies.find(pf._token);
+      it != _token_dependencies.end()) {
+    
+    // iterate tokens that defer to pf._token
+    // (e.g., 12 and 13)
+    for(size_t target : it->second) {
+
+      auto dpf = _deferred_tokens.find(target);
+
+      assert(dpf != _deferred_tokens.end());
+
+      // erase pf._token from target's _dependents
+      // (e.g., remove 16 from 12's dependents)
+      dpf->second._dependents.erase(pf._token);
+      //  dpf->second._dependent_satellites[pf._token]
+      //);
+
+      // target has no dependents
+      if (dpf->second._dependents.empty()) {
+
+        // push target into _ready_tokens queue
+        _ready_tokens.emplace(dpf->second._token, dpf->second._num_deferrals);
+        //_ready_tokens.push(
+        //  std::make_pair(dpf->second._token, dpf->second._num_deferrals)
+        //);
+        
+        // erase target from _deferred_tokens
+        _deferred_tokens.erase(dpf);
+      }
+    }
+
+    // remove pf._token from _token_dependencies
+    // (e.g., remove the entry
+    // {key: 16, value: std::vector{12, 13}} from _token_dependencies)
+    _token_dependencies.erase(it);
+  }
+}
+
 // Procedure: _build
 template <typename... Ps>
 void Pipeline<Ps...>::_build() {
@@ -565,13 +713,54 @@ void Pipeline<Ps...>::_build() {
       
       // First pipe does all jobs of initialization and token dependencies
       if (pf->_pipe == 0) {
-        pf->_token = _num_tokens;
+        // _ready_tokens queue is not empty
+        // substitute pf with the token at the front of the queue
+        if (!_ready_tokens.empty()) {
+          pf->_token = _ready_tokens.front().first;
+          pf->_num_deferrals = _ready_tokens.front().second;
+          _ready_tokens.pop();
+        }
+        else {
+          pf->_token = _num_tokens;
+          pf->_num_deferrals = 0;
+        }
+      
+      handle_token_dependency: 
+
         if (pf->_stop = false, _on_pipe(*pf, rt); pf->_stop == true) {
           // here, the pipeline is not stopped yet because other
           // lines of tasks may still be running their last stages
           return;
         }
-        ++_num_tokens;
+        
+        if (_num_tokens == pf->_token) {
+          ++_num_tokens;
+        }
+      
+        if (pf->_dependents.empty() == false){ 
+          // check if the pf->_dependents have valid dependents
+          _check_dependents(*pf); 
+          
+          // tokens in pf->_dependents are all valid dependents 
+          if (pf->_dependents.size()) {
+            
+            // construct a data structure for pf in _deferred_tokens 
+            _construct_deferred_tokens(*pf);
+            goto pipeline;
+          }
+
+          // tokens in pf->_dependents are invalid dependents
+          // directly goto on_pipe on the same line
+          else {
+            goto handle_token_dependency;
+          }
+        }
+        
+        // Every token within the deferral range needs to check
+        // if it can resolve dependencies on other tokens.
+        if (pf->_token <= _longest_deferral) {
+          _resolve_token_dependencies(*pf); 
+        }
       }
       else {
         _on_pipe(*pf, rt);
@@ -975,6 +1164,7 @@ ScalablePipeline<P>::ScalablePipeline(size_t num_lines, P first, P last) :
   _build();
 }
 
+/*
 // move constructor
 template <typename P>
 ScalablePipeline<P>::ScalablePipeline(ScalablePipeline&& rhs):
@@ -989,6 +1179,77 @@ ScalablePipeline<P>::ScalablePipeline(ScalablePipeline&& rhs):
   rhs._tasks.clear();
   _build();
 }
+*/
+
+// move constructor
+template <typename P>
+ScalablePipeline<P>::ScalablePipeline(ScalablePipeline&& rhs):
+  _num_tokens           {rhs._num_tokens},
+  _pipes                {std::move(rhs._pipes)},
+  _pipeflows            {std::move(rhs._pipeflows)},
+  _lines                {std::move(rhs._lines)},
+  _ready_tokens         {std::move(rhs._ready_tokens)},
+  _token_dependencies   {std::move(rhs._token_dependencies)},
+  _deferred_tokens      {std::move(rhs._deferred_tokens)},
+  _longest_deferral     {rhs._longest_deferral}{
+
+
+  //_num_tokens = rhs._num_tokens;
+
+  //_pipes.resize(rhs.num_pipes());
+  //size_t i=0;
+  //for(auto itr = rhs._pipes.begin(); itr != rhs._pipes.end(); itr++) {
+  //  _pipes[i++] = *itr;
+  //}
+
+
+  //_pipeflows.resize(rhs.num_lines());
+  //for(size_t l = 0; l<rhs.num_lines(); l++) {
+  //  _pipeflows[l]._pipe = rhs._pipeflows[l]._pipe;
+  //  _pipeflows[l]._line = rhs._pipeflows[l]._line;
+  //  _pipeflows[l]._num_deferrals = 0;
+  //  _pipeflows[l]._dependents.clear();
+  //}
+
+  //_lines = std::make_unique<Line[]>(rhs.num_lines() * rhs._pipes.size());
+  //for(size_t l=0; l<num_lines(); l++) {
+  //  for(size_t f=0; f<num_pipes(); f++) {
+  //    _line(l, f).join_counter.store(
+  //      rhs._line(l, f).join_counter, std::memory_order_relaxed
+  //    );
+  //  }
+  //}
+ 
+  //_ready_tokens = std::move(rhs._ready_tokens);
+  //_token_dependencies = std::move(rhs._token_dependencies);
+  //_deferred_tokens = std::move(rhs._deferred_tokens);
+
+  _graph.clear();
+  _tasks.resize(_pipeflows.size()+1);
+  rhs._longest_deferral = 0;
+  rhs._num_tokens       = 0;
+  rhs._tasks.clear();
+  _build();
+}
+
+//// move assignment operator
+//template <typename P>
+//ScalablePipeline<P>& ScalablePipeline<P>::operator = (ScalablePipeline&& rhs) {
+//  _graph                = std::move(rhs._graph);
+//  _num_tokens           = rhs._num_tokens;
+//  _pipes                = std::move(rhs._pipes);
+//  _tasks                = std::move(rhs._tasks);
+//  _pipeflows            = std::move(rhs._pipeflows);
+//  _lines                = std::move(rhs._lines);
+//  rhs._num_tokens       = 0;
+//  _ready_tokens         = std::move(rhs._ready_tokens);
+//  _token_dependencies   = std::move(rhs._token_dependencies);
+//  _deferred_tokens      = std::move(rhs._deferred_tokens);
+//  _longest_deferral     = rhs._longest_deferral;
+//  rhs._longest_deferral = 0;
+//  std::cout << "scalable move assignment\n";
+//  return *this;
+//}
 
 // move assignment operator
 template <typename P>
@@ -1088,6 +1349,8 @@ void ScalablePipeline<P>::reset() {
   for(size_t l = 0; l<num_lines(); l++) {
     _pipeflows[l]._pipe = 0;
     _pipeflows[l]._line = l;
+    _pipeflows[l]._num_deferrals = 0;
+    _pipeflows[l]._dependents.clear();
   }
 
   _line(0, 0).join_counter.store(0, std::memory_order_relaxed);
@@ -1109,6 +1372,10 @@ void ScalablePipeline<P>::reset() {
       static_cast<size_t>(_pipes[0]->type()) - 1, std::memory_order_relaxed
     );
   }
+  
+  assert(_ready_tokens.empty() == true);
+  _token_dependencies.clear();
+  _deferred_tokens.clear();
 }
 
 // Procedure: _on_pipe
@@ -1125,6 +1392,79 @@ void ScalablePipeline<P>::_on_pipe(Pipeflow& pf, NonpreemptiveRuntime& rt) {
   }
   else {
     static_assert(dependent_false_v<callable_t>, "un-supported pipe callable type");
+  }
+}
+
+template <typename P>
+void ScalablePipeline<P>::_check_dependents(Pipeflow& pf) {
+  ++pf._num_deferrals;
+  
+  for (auto it = pf._dependents.begin(); it != pf._dependents.end();) {
+ 
+    // valid (e.g., 12.defer(16)) 
+    if (*it >= _num_tokens) {
+      _token_dependencies[*it].push_back(pf._token);
+      _longest_deferral = std::max(_longest_deferral, *it);
+      ++it;
+    }
+    // valid or invalid (e.g., 12.defer(7))
+    else {
+      auto pit = _deferred_tokens.find(*it);
+      
+      // valid (e.g., 7 is deferred)
+      if (pit != _deferred_tokens.end()) {
+        _token_dependencies[*it].push_back(pf._token);
+        ++it;
+      }
+
+      else {
+        it = pf._dependents.erase(it);
+      }
+    }
+  }
+}
+
+// Procedure: _construct_deferred_tokens
+// Construct a data structure for a deferred token
+template <typename P>
+void ScalablePipeline<P>::_construct_deferred_tokens(Pipeflow& pf) {
+  
+  // construct the deferred pipeflow with zero copy
+  _deferred_tokens.emplace(
+    std::piecewise_construct,
+    std::forward_as_tuple(pf._token),
+    std::forward_as_tuple(
+      pf._token, pf._num_deferrals, std::move(pf._dependents)
+    )
+  );
+}
+
+// Procedure: _resolve_token_dependencies
+// Resolve dependencies for tokens that defer to current token
+template <typename P>
+void ScalablePipeline<P>::_resolve_token_dependencies(Pipeflow& pf) {
+
+  if (auto it = _token_dependencies.find(pf._token);
+      it != _token_dependencies.end()) {
+    
+    // iterate tokens that defer to pf._token
+    for(size_t target : it->second) {
+
+      auto dpf = _deferred_tokens.find(target);
+
+      assert(dpf != _deferred_tokens.end());
+
+      // erase pf._token from target's _dependents
+      dpf->second._dependents.erase(pf._token);
+      
+      // target has no dependents
+      if (dpf->second._dependents.empty()) {
+        _ready_tokens.emplace(dpf->second._token, dpf->second._num_deferrals);
+        _deferred_tokens.erase(dpf);
+      }
+    }
+
+    _token_dependencies.erase(it);
   }
 }
 
@@ -1156,13 +1496,54 @@ void ScalablePipeline<P>::_build() {
 
       // First pipe does all jobs of initialization and token dependencies
       if (pf->_pipe == 0) {
-        pf->_token = _num_tokens;
+        // _ready_tokens queue is not empty
+        // substitute pf with the token at the front of the queue
+        if (!_ready_tokens.empty()) {
+          pf->_token = _ready_tokens.front().first;
+          pf->_num_deferrals = _ready_tokens.front().second;
+          _ready_tokens.pop();
+        }
+        else {
+          pf->_token = _num_tokens;
+          pf->_num_deferrals = 0;
+        }
+      
+      handle_token_dependency: 
+
         if (pf->_stop = false, _on_pipe(*pf, rt); pf->_stop == true) {
           // here, the pipeline is not stopped yet because other
           // lines of tasks may still be running their last stages
           return;
         }
-        ++_num_tokens;
+        
+        if (_num_tokens == pf->_token) {
+          ++_num_tokens;
+        }
+      
+        if (pf->_dependents.empty() == false){ 
+          // check if the pf->_dependents have valid dependents
+          _check_dependents(*pf); 
+          
+          // tokens in pf->_dependents are all valid dependents 
+          if (pf->_dependents.size()) {
+            
+            // construct a data structure for pf in _deferred_tokens 
+            _construct_deferred_tokens(*pf);
+            goto pipeline;
+          }
+
+          // tokens in pf->_dependents are invalid dependents
+          // directly goto on_pipe on the same line
+          else {
+            goto handle_token_dependency;
+          }
+        }
+        
+        // Every token within the deferral range needs to check
+        // if it can resolve dependencies on other tokens.
+        if (pf->_token <= _longest_deferral) {
+          _resolve_token_dependencies(*pf); 
+        }
       }
       else {
         _on_pipe(*pf, rt);

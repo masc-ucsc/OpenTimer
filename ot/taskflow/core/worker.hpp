@@ -101,6 +101,7 @@ class Worker {
   BoundedWSQ<Node*> _wsq;
 };
 
+
 // ----------------------------------------------------------------------------
 // Class Definition: WorkerView
 // ----------------------------------------------------------------------------
@@ -277,7 +278,7 @@ are invoked by each worker simultaneously.
 class WorkerInterface {
 
   public:
-  
+
   /**
   @brief default destructor
   */

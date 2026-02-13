@@ -117,7 +117,7 @@ We recommend using out-of-source build.
 ~$ cd OpenTimer
 ~$ mkdir build
 ~$ cd build
-~$ cmake ../
+~$ cmake ../ -DCMAKE_CXX_STANDARD=17
 ~$ make 
 ```
 
@@ -163,7 +163,7 @@ The above figure shows an example
 lineage graph of a sequence of builder operations.
 The cyan path is the main lineage line 
 with additional tasks attached to enable parallel execution.
-OpenTimer use [Cpp-Taskflow][Cpp-Taskflow] to create dependency graphs.
+OpenTimer use [Taskflow][Taskflow] to create dependency graphs.
 
 ## Action: Update Timing
 
@@ -247,9 +247,6 @@ cmake_minimum_required (VERSION 3.9)                  # CMake minimum version
 project(app)                                          # your OpenTimer application
 add_subdirectory(OpenTimer)                           # add OpenTimer project
 include_directories(${PROJECT_SOURCE_DIR}/OpenTimer)  # add OpenTimer include
-
-set(CMAKE_CXX_STANDARD 17)                            # enable c++17
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Threads REQUIRED)                        # thread library (pthread)
 
@@ -399,6 +396,7 @@ OpenTimer is being actively developed and contributed by the following people:
 - [Pao-I Chen][Pao-I Chen] helped design the logo of OpenTimer.
 - [Leslie Hwang][Leslie Hwang] reviewed the documentation and README.
 - [Song Chen][Song Chen] shared his opinion about command designs to avoid naming conflicts and litigation.
+- [Che Chang](https://randy1005.github.io/) designed parallelization strategies and performance optimizations to accelerate critical path generation.
 
 <!--
 
@@ -438,7 +436,7 @@ using several third-party tools and services. Thanks a lot!
 + [units][units]: a compile-time header-only dimensional analysis and unit conversion
 + [Parser-SPEF][Parser-SPEF]: a fast C++ header-only parser for standard parasitic exchange format (SPEF)
 + [PEGTL][PEGTL]: parsing expression grammar template library
-+ [Cpp-Taskflow][Cpp-Taskflow]: fast C++ parallel programming with task dependencies
++ [Taskflow][Taskflow]: fast C++ parallel programming with task dependencies
 + [NanGate 45nm Library][NanGate]: open-source standard-cell library for testing and exploring EDA flows
 + [OSU PDK][OSUPDK]: Oklahoma State University system on chip (SoC) design flows
 + [Synopsys TAP-in][Synopsys Tap-in]: Synopsys technology access program for liberty user guide and open-source SDC parser.
@@ -497,7 +495,7 @@ You can find a copy of these licenses under the folder [licenses](licenses).
 [units]:                 https://github.com/nholthaus/units
 [PEGTL]:                 https://github.com/taocpp/PEGTL
 [Parser-SPEF]:           https://github.com/OpenTimer/Parser-SPEF         
-[Cpp-Taskflow]:          https://github.com/cpp-taskflow/cpp-taskflow
+[Taskflow]:              https://github.com/taskflow/taskflow
 [NanGate]:               http://www.nangate.com/?page_id=22
 [OSUPDK]:                https://vlsiarch.ecen.okstate.edu/flow/
 [Synopsys TAP-in]:       https://www.synopsys.com/community/interoperability-programs/tap-in.html

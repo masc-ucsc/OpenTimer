@@ -36,7 +36,6 @@ class Timer {
     // Builder
     Timer& set_num_threads(unsigned);
     Timer& read_celllib(std::filesystem::path, std::optional<Split> = {});
-    Timer& read_celllibs(std::filesystem::path, std::optional<Split> = {});
     Timer& read_verilog(std::filesystem::path);
     Timer& read_spef(std::filesystem::path);
     Timer& read_sdc(std::filesystem::path);
@@ -123,7 +122,6 @@ class Timer {
     inline const auto& pins() const;
     inline const auto& nets() const;
     inline const auto& gates() const;
-    inline const auto& celllib(Split el) const;
     inline const auto& clocks() const;
     inline const auto& tests() const;
     inline const auto& arcs() const;
@@ -291,8 +289,6 @@ class Timer {
     Test& _insert_test(Arc&);
     Clock& _create_clock(const std::string&, Pin&, float);
     Clock& _create_clock(const std::string&, float);
-    Clock& _create_clock(const std::string&, Pin&, float, std::array<float, MAX_TRAN>);
-    Clock& _create_clock(const std::string&, float, std::array<float, MAX_TRAN>);
 
     std::optional<float> _report_at(const std::string&, Split, Tran);
     std::optional<float> _report_rat(const std::string&, Split, Tran);
@@ -438,12 +434,6 @@ inline const auto& Timer::nets() const {
 // Expose the gate data structure to users
 inline const auto& Timer::gates() const {
   return _gates;
-}
-
-// Function: celllib
-// Expose the celllib data structure to users
-inline const auto& Timer::celllib(Split el) const {
-  return _celllib[el];
 }
 
 // Function: clocks
