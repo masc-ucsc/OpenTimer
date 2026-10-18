@@ -182,6 +182,7 @@ std::string to_string(TimingType t) {
 bool Timing::isomorphic(const Timing& rhs) const {
   
   if(related_pin != rhs.related_pin) return false;
+  if(when != rhs.when)               return false;
   if(sense != rhs.sense)             return false;
   if(type != rhs.type)               return false;
   if(cell_rise.has_value() != rhs.cell_rise.has_value()) return false;

@@ -30,6 +30,10 @@ class Arc {
 
     std::string name() const;
 
+    std::optional<float> delay(Split split, Tran from, Tran to) const {
+      return _delay[split][from][to];
+    }
+
     bool is_cell_arc() const;
     bool is_net_arc() const;
     bool is_pseg() const;
@@ -52,6 +56,7 @@ class Arc {
     size_t _idx;
 
     int _state {0};
+    std::uint8_t _case_mask {15};
 
     std::variant<Net*, TimingView> _handle;
 

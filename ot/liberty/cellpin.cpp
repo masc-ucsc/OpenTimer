@@ -49,6 +49,9 @@ void Cellpin::scale_time(float s) {
 
 // Procedure: scale_capacitance
 void Cellpin::scale_capacitance(float s) {
+  for(auto* range : {&rise_capacitance_range, &fall_capacitance_range}) {
+    for(auto& cap : *range) if(cap) *cap *= s;
+  }
   
   if(capacitance) {
     capacitance = capacitance.value() * s;

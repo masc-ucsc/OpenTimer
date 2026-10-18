@@ -38,8 +38,22 @@ class Timer {
     Timer& read_celllib(std::filesystem::path, std::optional<Split> = {});
     Timer& read_verilog(std::filesystem::path);
     Timer& read_spef(std::filesystem::path);
+    // In-memory placement parasitics, with fully expanded names and R/C units.
+    Timer& read_parasitics(spef::Spef value) {
+      auto data = std::make_shared<spef::Spef>(std::move(value));
+      std::scoped_lock lock(_mutex);
+      auto reader = _taskflow.emplace([this, data] () {
+        _rebase_unit(*data);
+        _read_spef(*data);
+      });
+      _add_to_lineage(reader);
+      return *this;
+    }
     Timer& read_sdc(std::filesystem::path);
     Timer& read_timing(std::filesystem::path);
+    // Explicit analysis annotation. Existing create_clock behavior is unchanged.
+    // Reapply after topology changes; an empty clock list restores propagation.
+    Timer& set_ideal_clocks(std::vector<std::string>, std::vector<std::string> = {});
     Timer& insert_net(std::string);
     Timer& insert_gate(std::string, std::string);
     Timer& repower_gate(std::string, std::string);
@@ -52,6 +66,14 @@ class Timer {
     Timer& set_at(std::string, Split, Tran, std::optional<float>);
     Timer& set_rat(std::string, Split, Tran, std::optional<float>);
     Timer& set_slew(std::string, Split, Tran, std::optional<float>);
+    // Replace combinational case-analysis masks. Bits are RR, RF, FR, FF.
+    // Reapply after connectivity changes; an empty list restores all arcs.
+    Timer& set_case_masks(std::vector<std::tuple<std::string, std::string, std::uint8_t>>);
+    // Further restrict individual materialized arcs (for Liberty when clauses).
+    Timer& refine_case_masks(std::vector<std::pair<size_t, std::uint8_t>>);
+    // SDC driving-cell model: loaded-minus-unloaded delay plus loaded slew.
+    Timer& set_input_driver(std::string, std::string, std::string, std::string,
+                            Split, Tran, std::array<float, 2>);
     Timer& set_load(std::string, Split, Tran, std::optional<float>);
     Timer& create_clock(std::string, float);
     Timer& create_clock(std::string, std::string, float);

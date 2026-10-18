@@ -1,0 +1,39 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+cc_library(
+    name = "doctest",
+    testonly = True,
+    hdrs = ["doctest.h"],
+)
+
+# unit.cpp contains only commented-out tests for an obsolete API. Do not
+# register an empty test binary as passing coverage.
+[
+    cc_test(
+        name = name,
+        size = "small",
+        timeout = "short",
+        srcs = [name + ".cpp"],
+        deps = [
+            ":doctest",
+            "//:opentimer",
+        ],
+    )
+    for name in [
+        "path",
+        "utility",
+        "taskflow_smoke",
+    ]
+]
+
+cc_test(
+    name = "celllib_smoke",
+    size = "small",
+    timeout = "short",
+    srcs = ["celllib_smoke.cpp"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//:opentimer",
+        "@googletest//:gtest_main",
+    ],
+)

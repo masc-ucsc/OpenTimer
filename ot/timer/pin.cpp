@@ -5,6 +5,13 @@
 
 namespace ot {
 
+const SlewThresholds& Pin::thresholds(Split el) const {
+  if(const auto* cp = cellpin(el)) return cp->thresholds;
+  static const SlewThresholds defaults;
+  return _default_thresholds[el] ? *_default_thresholds[el] : defaults;
+}
+
+
 // Constructor
 PrimaryOutput::PrimaryOutput(Pin& pin) : _pin {pin} {
 }
@@ -338,6 +345,8 @@ float Pin::cap(Split el, Tran rf) const {
       return po->_load[el][rf];
     },
     [&] (CellpinView cp) {
+      const auto& range = rf == RISE ? cp[el]->rise_capacitance_range : cp[el]->fall_capacitance_range;
+      if(range[el]) return *range[el];
       if(rf == RISE && cp[el]->rise_capacitance) {
         return cp[el]->rise_capacitance.value();
       }

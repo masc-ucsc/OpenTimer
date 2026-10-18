@@ -96,6 +96,7 @@ std::string to_string(TimingType);
 struct Timing {
   
   std::string related_pin;
+  std::optional<std::string> when;
 
   std::optional<TimingSense> sense;         
   std::optional<TimingType> type;           

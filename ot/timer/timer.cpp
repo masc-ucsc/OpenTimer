@@ -20,6 +20,56 @@ void Timer::_add_to_lineage(tf::Task task) {
   _lineage = task;
 }
 
+// Only arcs on paths from a clock source to actual clock sinks are ideal.
+// In particular, do not mark ICG enables or propagate through clock-to-Q arcs.
+Timer& Timer::set_ideal_clocks(std::vector<std::string> names, std::vector<std::string> extra_sinks) {
+  std::scoped_lock lock(_mutex);
+  auto task = _taskflow.emplace([this, names=std::move(names), extra_sinks=std::move(extra_sinks)] () {
+    for(auto& [name, pin] : _pins) {
+      if(pin._ideal_clock) _insert_frontier(pin);
+      pin._ideal_clock = false;
+      pin._ideal_clock_source = nullptr;
+    }
+    const auto combinational = [] (const Arc* arc) {
+      if(arc->is_net_arc()) return true;
+      for(auto split : {MIN, MAX}) {
+        const auto* timing = arc->timing_view()[split];
+        if(timing && (timing->is_constraint() || timing->is_rising_edge_triggered() || timing->is_falling_edge_triggered())) return false;
+      }
+      return true;
+    };
+    for(const auto& name : names) {
+      const auto clock = _clocks.find(name);
+      if(clock == _clocks.end() || !clock->second._source) continue;
+      auto* source = clock->second._source;
+      std::unordered_set<Pin*> reached{source};
+      std::vector<Pin*> forward{source}, sinks;
+      for(size_t i=0; i<forward.size(); ++i) {
+        auto* pin = forward[i];
+        bool sink = false;
+        for(auto split : {MIN, MAX}) if(auto* cp = pin->cellpin(split); cp && cp->is_clock.value_or(false)) sink = true;
+        if(sink) sinks.push_back(pin);
+        for(auto* arc : pin->_fanout) if(combinational(arc) && reached.insert(&arc->_to).second) forward.push_back(&arc->_to);
+      }
+      for(const auto& name : extra_sinks) {
+        const auto pin = _pins.find(name);
+        if(pin != _pins.end() && reached.count(&pin->second)) sinks.push_back(&pin->second);
+      }
+      std::unordered_set<Pin*> marked;
+      for(size_t i=0; i<sinks.size(); ++i) {
+        auto* pin = sinks[i];
+        if(!marked.insert(pin).second) continue;
+        pin->_ideal_clock = true;
+        if(pin == source) pin->_ideal_clock_source = &clock->second;
+        _insert_frontier(*pin);
+        for(auto* arc : pin->_fanin) if(combinational(arc) && reached.count(&arc->_from)) sinks.push_back(&arc->_from);
+      }
+    }
+  });
+  _add_to_lineage(task);
+  return *this;
+}
+
 // Function: _max_pin_name_size
 size_t Timer::_max_pin_name_size() const {
   if(_pins.empty()) {
@@ -429,6 +479,7 @@ Pin& Timer::_insert_pin(const std::string& name) {
     
     // Generate the pin idx
     auto& pin = itr->second;
+    for(auto el : {MIN, MAX}) if(_celllib[el]) pin._default_thresholds[el] = &_celllib[el]->thresholds;
     
     // Assign the idx mapping
     pin._idx = _pin_idx_gen.get();
@@ -708,6 +759,56 @@ Arc& Timer::_insert_arc(Pin& from, Pin& to, TimingView tv) {
   return arc;
 }
 
+// Function: set_case_masks
+Timer& Timer::set_case_masks(std::vector<std::tuple<std::string, std::string, std::uint8_t>> masks) {
+  std::scoped_lock lock(_mutex);
+  auto task = _taskflow.emplace([this, masks=std::move(masks)] () {
+    for(auto& arc : _arcs) if(arc._case_mask != 15) {
+      arc._case_mask = 15;
+      _insert_frontier(arc._from, arc._to);
+    }
+    for(const auto& [from, to, mask] : masks) {
+      const auto it = _pins.find(from);
+      OT_LOGF_IF(it == _pins.end() || mask > 15, "invalid case-analysis arc: ", from);
+      for(auto* arc : it->second._fanout) if(arc->is_cell_arc() && arc->_to._name == to) {
+        arc->_case_mask = mask;
+        _insert_frontier(arc->_from, arc->_to);
+      }
+    }
+  });
+  _add_to_lineage(task);
+  return *this;
+}
+
+Timer& Timer::refine_case_masks(std::vector<std::pair<size_t, std::uint8_t>> masks) {
+  std::scoped_lock lock(_mutex);
+  auto task = _taskflow.emplace([this, masks=std::move(masks)] () {
+    for(const auto& [index, mask] : masks) {
+      OT_LOGF_IF(index >= _idx2arc.size() || !_idx2arc[index] || mask > 15, "invalid case arc index");
+      auto& arc = *_idx2arc[index];
+      arc._case_mask &= mask;
+      _insert_frontier(arc._from, arc._to);
+    }
+  });
+  _add_to_lineage(task);
+  return *this;
+}
+
+// Function: set_input_driver
+Timer& Timer::set_input_driver(std::string port, std::string cell, std::string from,
+                               std::string to, Split el, Tran rf, std::array<float, 2> slew) {
+  std::scoped_lock lock(_mutex);
+  auto task = _taskflow.emplace([this, port=std::move(port), cell=std::move(cell),
+                                from=std::move(from), to=std::move(to), el, rf, slew] () {
+    const auto it = _pis.find(port);
+    OT_LOGF_IF(it == _pis.end(), "driving-cell port does not exist: ", port);
+    it->second._driver[el][rf] = PrimaryInput::InputDriver {cell, from, to, slew};
+    _insert_frontier(it->second._pin);
+  });
+  _add_to_lineage(task);
+  return *this;
+}
+
 // Procedure: _fprop_rc_timing
 void Timer::_fprop_rc_timing(Pin& pin) {
   if(auto net = pin._net; net) {
@@ -720,11 +821,47 @@ void Timer::_fprop_slew(Pin& pin) {
   
   // clear slew  
   pin._reset_slew();
+  if(pin._ideal_clock) {
+    for(auto el : {MIN, MAX}) for(auto rf : {RISE, FALL}) pin._relax_slew(nullptr, el, rf, el, rf, 0.0f);
+    return;
+  }
 
   // PI
-  if(auto pi = pin.primary_input(); pi) {
-    FOR_EACH_EL_RF_IF(el, rf, pi->_slew[el][rf]) {
-      pin._relax_slew(nullptr, el, rf, el, rf, *(pi->_slew[el][rf]));
+  if(pin.primary_input()) {
+    auto* pi = &_pis.at(pin._name);
+    FOR_EACH_EL_RF(el, rf) {
+      pi->_driver_delay[el][rf] = 0;
+      if(const auto& driver = pi->_driver[el][rf]) {
+        const auto* cell = _celllib[el] ? _celllib[el]->cell(driver->cell) : nullptr;
+        const auto* out = cell ? cell->cellpin(driver->to) : nullptr;
+        OT_LOGF_IF(!out, "driving-cell output does not exist: ", driver->cell, ':', driver->to);
+        const float load = pin._net ? pin._net->_load(el, rf) : 0;
+        std::optional<float> best_delay, best_slew;
+        float best_delta = 0;
+        for(const auto& timing : out->timings) {
+          if(timing.is_constraint() || (!driver->from.empty() && timing.related_pin != driver->from)) continue;
+          for(auto input_rf : {RISE, FALL}) {
+            const auto si = driver->input_slew[input_rf];
+            const auto delay = timing.delay(input_rf, rf, si, load);
+            const auto unloaded = timing.delay(input_rf, rf, si, 0);
+            const auto slew = timing.slew(input_rf, rf, si, load);
+            if(delay && unloaded && slew && (!best_delay || (el == MAX ? *delay > *best_delay : *delay < *best_delay))) {
+              best_delay = delay;
+              best_slew = slew;
+              best_delta = *delay - *unloaded;
+            }
+          }
+        }
+        OT_LOGF_IF(!best_slew, "driving cell has no characterized arc: ", driver->cell, ':', driver->to);
+        const auto& source = out->thresholds;
+        const auto& target = pin.thresholds(el);
+        const float shift = *best_slew * (target.input[rf] - source.output[rf]) / source.span(rf);
+        pi->_driver_delay[el][rf] = best_delta + (rf == RISE ? shift : -shift);
+        const float slew = *best_slew * (target.span(rf) / target.derate) / (source.span(rf) / source.derate);
+        pin._relax_slew(nullptr, el, rf, el, rf, slew);
+      } else if(pi->_slew[el][rf]) {
+        pin._relax_slew(nullptr, el, rf, el, rf, *(pi->_slew[el][rf]));
+      }
     }
   }
   
@@ -745,6 +882,14 @@ void Timer::_fprop_delay(Pin& pin) {
   // Compute the delay from its fanin.
   for(auto arc : pin._fanin) {
     arc->_fprop_delay();
+    if(pin._ideal_clock) {
+      // A clock gate's enable is data, not a second clock source. Its setup/
+      // hold tests remain timed, but its data arc must not move the ideal edge.
+      if(!arc->_from._ideal_clock) { arc->_reset_delay(); continue; }
+      // Preserve valid transition pairs and timing sense (including inversion).
+      for(auto el : {MIN, MAX}) for(auto frf : {RISE, FALL}) for(auto trf : {RISE, FALL})
+        if(arc->_delay[el][frf][trf]) arc->_delay[el][frf][trf] = 0.0f;
+    }
   }
 }
 
@@ -753,11 +898,16 @@ void Timer::_fprop_at(Pin& pin) {
   
   // clear at
   pin._reset_at();
+  if(pin._ideal_clock_source) {
+    for(auto el : {MIN, MAX}) for(auto rf : {RISE, FALL})
+      pin._relax_at(nullptr, el, rf, el, rf, pin._ideal_clock_source->_waveform[rf]);
+    return;
+  }
 
   // PI
   if(auto pi = pin.primary_input(); pi) {
     FOR_EACH_EL_RF_IF(el, rf, pi->_at[el][rf]) {
-      pin._relax_at(nullptr, el, rf, el, rf, *(pi->_at[el][rf]));
+      pin._relax_at(nullptr, el, rf, el, rf, *(pi->_at[el][rf]) + pi->_driver_delay[el][rf]);
     }
   }
 
@@ -1478,6 +1628,7 @@ Timer& Timer::set_slew(std::string name, Split m, Tran t, std::optional<float> v
 // Procedure: _set_slew
 void Timer::_set_slew(PrimaryInput& pi, Split m, Tran t, std::optional<float> v) {
   pi._slew[m][t] = v;
+  pi._driver[m][t].reset();
   _insert_frontier(pi._pin);
 }
 

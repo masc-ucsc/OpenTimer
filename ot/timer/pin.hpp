@@ -14,6 +14,7 @@ class Arc;
 class Pin;
 class Test;
 class SCC;
+class Clock;
 
 // ------------------------------------------------------------------------------------------------
 
@@ -30,6 +31,12 @@ class PrimaryInput {
   private:
 
     Pin& _pin;
+    struct InputDriver {
+      std::string cell, from, to;
+      std::array<float, 2> input_slew;
+    };
+    TimingData<std::optional<InputDriver>, MAX_SPLIT, MAX_TRAN> _driver;
+    TimingData<float, MAX_SPLIT, MAX_TRAN> _driver_delay {{{0, 0}, {0, 0}}};
 
     TimingData<std::optional<float>, MAX_SPLIT, MAX_TRAN> _slew;
     TimingData<std::optional<float>, MAX_SPLIT, MAX_TRAN> _at;
@@ -132,6 +139,7 @@ class Pin {
     inline const Net* net() const;
     inline const Gate* gate() const;
     
+    bool is_ideal_clock() const { return _ideal_clock; }
     bool is_input() const;
     bool is_output() const;
     bool is_rct_root() const;
@@ -146,6 +154,7 @@ class Pin {
 
     float cap(Split, Tran) const;
 
+    const SlewThresholds& thresholds(Split) const;
     inline size_t num_fanouts() const;
     inline size_t num_fanins() const;
     inline size_t idx() const;
@@ -153,6 +162,9 @@ class Pin {
   private:
 
     std::string _name;
+    std::array<const SlewThresholds*, 2> _default_thresholds {nullptr, nullptr};
+    bool _ideal_clock {false};
+    Clock* _ideal_clock_source {nullptr};
 
     size_t _idx;
 

@@ -94,13 +94,10 @@ feed into the data pin `f1:D` of the flip-flop `DFFNEGX1`.
 ## System Requirements
 
 OpenTimer is very self-contained and has very few dependencies.
-To compile OpenTimer, you need a [C++17][C++17] compiler. 
-We currently support:
+This fork requires GCC or Clang with a C++20 standard library, including
+atomic wait/notify support used by the bundled Taskflow.
 
-+ GNU C++ Compiler v7.3 with -std=c++1z
-+ Clang C++ Compiler v6.0 with -std=c++17
-
-In addition, you need a tcl shell interpreter:
+The CMake build and Tcl-based SDC reader also require a Tcl shell interpreter:
 
 + [tclsh](https://www.tcl.tk/about/language.html) 
 (most Unix/Linux/OSX distributions already include tclsh)
@@ -117,12 +114,47 @@ We recommend using out-of-source build.
 ~$ cd OpenTimer
 ~$ mkdir build
 ~$ cd build
-~$ cmake ../ -DCMAKE_CXX_STANDARD=17
+~$ cmake ../ -DCMAKE_CXX_STANDARD=20
 ~$ make 
 ```
 
 After successful build, you can find binaries and libraries in the folders `bin` 
 and `lib`, respectively.
+
+## Build and test the library through Bazel
+
+The fork also supports standalone Bazel builds on macOS and Linux, using a
+C++20 compiler (required by the bundled Taskflow). Bazelisk selects the version
+in `.bazelversion`; dependencies are pinned in `MODULE.bazel`.
+
+```bash
+bazel build -c opt //:opentimer //:taskflow
+bazel test -c opt //...
+bazel test -c dbg //...
+# Run only the Liberty parsing and timing regressions:
+bazel test -c opt //unittest:celllib_smoke
+```
+
+The small suite covers tokenization, path heaps, Liberty buses and lookup
+tables, mixed library units and slew thresholds, input drivers, ideal clocks,
+and using OpenTimer alongside the bundled Taskflow executor. Each local Bazel
+test has a 30-second timeout. The old `unittest/unit.cpp` contains only disabled
+tests and is not registered. CMake remains the build for the shell, examples,
+and TAU benchmark suite.
+
+Bazel uses `packages/ot/config.hpp`, independently of CMake's generated
+`ot/config.hpp`. It does not require running CMake first. On macOS the local
+configuration selects Apple Command Line Tools.
+
+LiveHD can continue using
+`local_repository(name = "opentimer", path = "../OpenTimer")` with the same
+public labels: `@opentimer//:opentimer`, `@opentimer//:taskflow`, and
+`@opentimer//:srcs`. Consumers select C++20 or newer in their own configuration;
+dependency `.bazelrc` files are not inherited. Code linked with OpenTimer must
+use `@opentimer//:taskflow` for `<taskflow/taskflow.hpp>` to avoid mixing
+incompatible Taskflow implementations in one binary. The OpenTimer-only
+regressions from LiveHD are also available here as
+`@opentimer//unittest:celllib_smoke` (requiring the consumer's `@googletest`).
 
 ## Run Tests
 OpenTimer uses [Doctest](https://github.com/onqtam/doctest) for unit tests and

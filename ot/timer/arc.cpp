@@ -83,7 +83,7 @@ void Arc::_reset_delay() {
 // Procedure: _fprop_slew
 void Arc::_fprop_slew() {
 
-  if(_has_state(LOOP_BREAKER)) {
+  if(_has_state(LOOP_BREAKER) || _case_mask == 0) {
     return;
   }
 
@@ -93,14 +93,17 @@ void Arc::_fprop_slew() {
       FOR_EACH_EL_RF(el, rf) {
         if(_from._slew[el][rf]) {
           if(auto so = net->_slew(el, rf, *(_from._slew[el][rf]), _to); so) {
-            _to._relax_slew(this, el, rf, el, rf, *so);
+            const auto& from = _from.thresholds(el);
+            const auto& to = _to.thresholds(el);
+            const auto adjusted = *so * (to.span(rf) / to.derate) / (from.span(rf) / from.derate);
+            _to._relax_slew(this, el, rf, el, rf, adjusted);
           }
         }
       }
     },
     // Case 2: Cell arc
     [this] (TimingView tv) {
-      FOR_EACH_EL_RF_RF_IF(el, frf, trf, (tv[el] && _from._slew[el][frf])) {
+      FOR_EACH_EL_RF_RF_IF(el, frf, trf, (tv[el] && _from._slew[el][frf] && (_case_mask & (1U << (2 * frf + trf))))) {
         auto lc = (_to._net) ? _to._net->_load(el, trf) : 0.0f;
         if(auto so = tv[el]->slew(frf, trf, *_from._slew[el][frf], lc); so) {
           _to._relax_slew(this, el, frf, el, trf, *so);
@@ -113,7 +116,7 @@ void Arc::_fprop_slew() {
 // Procedure: _fprop_delay
 void Arc::_fprop_delay() {
   
-  if(_has_state(LOOP_BREAKER)) {
+  if(_has_state(LOOP_BREAKER) || _case_mask == 0) {
     return;
   }
 
@@ -122,11 +125,19 @@ void Arc::_fprop_delay() {
     [this] (Net* net) {
       FOR_EACH_EL_RF(el, rf) {
         _delay[el][rf][rf] = net->_delay(el, rf, _to);
+        if(_delay[el][rf][rf] && _from._slew[el][rf]) {
+          const auto& from = _from.thresholds(el);
+          const auto& to = _to.thresholds(el);
+          if(auto slew = net->_slew(el, rf, *_from._slew[el][rf], _to)) {
+            const float shift = *slew * (to.input[rf] - from.output[rf]) / from.span(rf);
+            *_delay[el][rf][rf] += rf == RISE ? shift : -shift;
+          }
+        }
       }
     },
     // Case 2: Cell arc
     [this] (TimingView tv) {
-      FOR_EACH_EL_RF_RF_IF(el, frf, trf, (tv[el] && _from._slew[el][frf])) {
+      FOR_EACH_EL_RF_RF_IF(el, frf, trf, (tv[el] && _from._slew[el][frf] && (_case_mask & (1U << (2 * frf + trf))))) {
         auto lc = (_to._net) ? _to._net->_load(el, trf) : 0.0f;
         auto si = *_from._slew[el][frf];
         auto delay = tv[el]->delay(frf, trf, si, lc);
@@ -140,7 +151,7 @@ void Arc::_fprop_delay() {
 // Procedure: _fprop_at
 void Arc::_fprop_at() {
   
-  if(_has_state(LOOP_BREAKER)) {
+  if(_has_state(LOOP_BREAKER) || _case_mask == 0) {
     return;
   }
 
@@ -152,7 +163,7 @@ void Arc::_fprop_at() {
 // Procedure: _bprop_rat
 void Arc::_bprop_rat() {
   
-  if(_has_state(LOOP_BREAKER)) {
+  if(_has_state(LOOP_BREAKER) || _case_mask == 0) {
     return;
   }
 
@@ -166,7 +177,7 @@ void Arc::_bprop_rat() {
     // Case 2: Cell arc
     [this] (TimingView tv) {
 
-      FOR_EACH_EL_RF_RF_IF(el, frf, trf, tv[el]) {
+      FOR_EACH_EL_RF_RF_IF(el, frf, trf, (tv[el] && (_case_mask & (1U << (2 * frf + trf))))) {
         
         // propagation arc
         if(!tv[el]->is_constraint()) {
