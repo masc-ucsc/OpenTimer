@@ -37,3 +37,21 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+cc_test(
+    name = "rc_waveform",
+    size = "small",
+    timeout = "short",
+    srcs = ["rc_waveform.cpp"],
+    visibility = ["//visibility:public"],
+    deps = ["//:opentimer", "@googletest//:gtest_main"],
+)
+
+cc_test(
+    name = "rc_ceff",
+    size = "small",
+    timeout = "short",
+    srcs = ["rc_ceff.cpp"],
+    visibility = ["//visibility:public"],
+    deps = ["//:opentimer", "@googletest//:gtest_main"],
+)

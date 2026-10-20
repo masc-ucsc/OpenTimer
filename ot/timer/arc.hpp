@@ -66,6 +66,7 @@ class Arc {
     
     TimingData<std::optional<float>, MAX_SPLIT, MAX_TRAN, MAX_TRAN> _delay;
     TimingData<std::optional<float>, MAX_SPLIT, MAX_TRAN, MAX_TRAN> _ipower;
+    TimingData<float, MAX_SPLIT, MAX_TRAN, MAX_TRAN> _effective_load {};
 
     void _remap_timing(Split, const Timing&);
     void _fprop_slew();

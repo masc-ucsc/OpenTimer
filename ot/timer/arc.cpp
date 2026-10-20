@@ -92,11 +92,8 @@ void Arc::_fprop_slew() {
     [this] (Net* net) {
       FOR_EACH_EL_RF(el, rf) {
         if(_from._slew[el][rf]) {
-          if(auto so = net->_slew(el, rf, *(_from._slew[el][rf]), _to); so) {
-            const auto& from = _from.thresholds(el);
-            const auto& to = _to.thresholds(el);
-            const auto adjusted = *so * (to.span(rf) / to.derate) / (from.span(rf) / from.derate);
-            _to._relax_slew(this, el, rf, el, rf, adjusted);
+          if(auto response = net->_response(el, rf, *(_from._slew[el][rf]), _to)) {
+            _to._relax_slew(this, el, rf, el, rf, response->slew);
           }
         }
       }
@@ -105,8 +102,20 @@ void Arc::_fprop_slew() {
     [this] (TimingView tv) {
       FOR_EACH_EL_RF_RF_IF(el, frf, trf, (tv[el] && _from._slew[el][frf] && (_case_mask & (1U << (2 * frf + trf))))) {
         auto lc = (_to._net) ? _to._net->_load(el, trf) : 0.0f;
-        if(auto so = tv[el]->slew(frf, trf, *_from._slew[el][frf], lc); so) {
+        _effective_load[el][frf][trf] = lc;
+        const auto model = _to._net ? _to._net->_gate_response(*tv[el], el, frf, trf, *_from._slew[el][frf])
+                                    : std::nullopt;
+        const auto so = model ? std::optional<float>(model->slew)
+                              : tv[el]->slew(frf, trf, *_from._slew[el][frf], lc);
+        if (model) _effective_load[el][frf][trf] = model->capacitance;
+        if(so) {
           _to._relax_slew(this, el, frf, el, trf, *so);
+          if (_to._net && _to._slew[el][trf] && _to._slew[el][trf]->pi_arc == this
+              && _to._slew[el][trf]->pi_rf == frf) {
+            _to._net->_driver[el][trf] = model ? std::optional<RcDriver>(model->driver) : std::nullopt;
+            _to._net->_effective_cap[el][trf] = model ? std::optional<float>(model->capacitance) : std::nullopt;
+            _to._net->_elmore_fallback[el][trf] = !model && _to._net->rct();
+          }
         }
       }
     }
@@ -124,21 +133,17 @@ void Arc::_fprop_delay() {
     // Case 1: Net arc
     [this] (Net* net) {
       FOR_EACH_EL_RF(el, rf) {
-        _delay[el][rf][rf] = net->_delay(el, rf, _to);
-        if(_delay[el][rf][rf] && _from._slew[el][rf]) {
-          const auto& from = _from.thresholds(el);
-          const auto& to = _to.thresholds(el);
-          if(auto slew = net->_slew(el, rf, *_from._slew[el][rf], _to)) {
-            const float shift = *slew * (to.input[rf] - from.output[rf]) / from.span(rf);
-            *_delay[el][rf][rf] += rf == RISE ? shift : -shift;
-          }
+        _delay[el][rf][rf].reset();
+        const float slew = _from._slew[el][rf] ? float(*_from._slew[el][rf]) : 0.0f;
+        if(auto response = net->_response(el, rf, slew, _to)) {
+          _delay[el][rf][rf] = response->delay;
         }
       }
     },
     // Case 2: Cell arc
     [this] (TimingView tv) {
       FOR_EACH_EL_RF_RF_IF(el, frf, trf, (tv[el] && _from._slew[el][frf] && (_case_mask & (1U << (2 * frf + trf))))) {
-        auto lc = (_to._net) ? _to._net->_load(el, trf) : 0.0f;
+        auto lc = _effective_load[el][frf][trf];
         auto si = *_from._slew[el][frf];
         auto delay = tv[el]->delay(frf, trf, si, lc);
         _delay[el][frf][trf] = delay;

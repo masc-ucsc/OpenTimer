@@ -934,17 +934,21 @@ void Timer::_fprop_slew(Pin& pin) {
         OT_LOGF_IF(!out, "driving-cell output does not exist: ", driver->cell, ':', driver->to);
         const float load = pin._net ? pin._net->_load(el, rf) : 0;
         std::optional<float> best_delay, best_slew;
+        std::optional<RcGateResult> best_model;
         float best_delta = 0;
         for(const auto& timing : out->timings) {
           if(timing.is_constraint() || (!driver->from.empty() && timing.related_pin != driver->from)) continue;
           for(auto input_rf : {RISE, FALL}) {
             const auto si = driver->input_slew[input_rf];
-            const auto delay = timing.delay(input_rf, rf, si, load);
+            const auto model = pin._net ? pin._net->_gate_response(timing, el, input_rf, rf, si, &out->thresholds)
+                                        : std::nullopt;
+            const auto delay = model ? std::optional<float>(model->delay) : timing.delay(input_rf, rf, si, load);
             const auto unloaded = timing.delay(input_rf, rf, si, 0);
-            const auto slew = timing.slew(input_rf, rf, si, load);
+            const auto slew = model ? std::optional<float>(model->slew) : timing.slew(input_rf, rf, si, load);
             if(delay && unloaded && slew && (!best_delay || (el == MAX ? *delay > *best_delay : *delay < *best_delay))) {
               best_delay = delay;
               best_slew = slew;
+              best_model = model;
               best_delta = *delay - *unloaded;
             }
           }
@@ -952,9 +956,23 @@ void Timer::_fprop_slew(Pin& pin) {
         OT_LOGF_IF(!best_slew, "driving cell has no characterized arc: ", driver->cell, ':', driver->to);
         const auto& source = out->thresholds;
         const auto& target = pin.thresholds(el);
-        const float shift = *best_slew * (target.input[rf] - source.output[rf]) / source.span(rf);
-        pi->_driver_delay[el][rf] = best_delta + (rf == RISE ? shift : -shift);
-        const float slew = *best_slew * (target.span(rf) / target.derate) / (source.span(rf) / source.derate);
+        float slew;
+        if (best_model && pin._net) {
+          auto model = best_model->driver;
+          const auto progress = [rf](double v) {return rf == RISE ? v : 1-v;};
+          const double logic = model.crossing(progress(target.input[rf]));
+          pi->_driver_delay[el][rf] = best_delta + logic-model.logic_time;
+          model.logic_time = logic;
+          slew = std::abs(model.crossing(progress(target.upper[rf]))
+                         - model.crossing(progress(target.lower[rf]))) / target.derate;
+          pin._net->_driver[el][rf] = model;
+          pin._net->_effective_cap[el][rf] = best_model->capacitance;
+        } else {
+          if (pin._net) pin._net->_elmore_fallback[el][rf] = pin._net->rct() != nullptr;
+          const float shift = *best_slew * (target.input[rf] - source.output[rf]) / source.span(rf);
+          pi->_driver_delay[el][rf] = best_delta + (rf == RISE ? shift : -shift);
+          slew = *best_slew * (target.span(rf) / target.derate) / (source.span(rf) / source.derate);
+        }
         pin._relax_slew(nullptr, el, rf, el, rf, slew);
       } else if(pi->_slew[el][rf]) {
         pin._relax_slew(nullptr, el, rf, el, rf, *(pi->_slew[el][rf]));
