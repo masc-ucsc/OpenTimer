@@ -559,6 +559,23 @@ Timer& Timer::cppr(bool flag) {
   return *this;
 }
 
+// Function: falling_edge_same_cycle
+Timer& Timer::falling_edge_same_cycle(bool flag) {
+
+  std::scoped_lock lock(_mutex);
+
+  auto op = _taskflow.emplace([this, flag] () {
+    _falling_same_cycle = flag;
+    for(auto& test : _tests) {
+      _insert_frontier(test._constrained_pin());
+    }
+  });
+
+  _add_to_lineage(op);
+
+  return *this;
+}
+
 // Function: preset_clear_arcs
 // Gates inserted after this call (in lineage order) include or skip their
 // async preset/clear -> output arcs.
@@ -1013,7 +1030,7 @@ void Timer::_fprop_test(Pin& pin) {
       // The capture clock is the ideal clock reaching the related (clock) pin;
       // without one (no ideal clock marking) fall back to the first clock.
       const auto* domain = test->_arc._from._ideal_clock_domain;
-      test->_fprop_rat(domain ? domain->_period : _clocks.begin()->second._period);
+      test->_fprop_rat(domain ? domain->_period : _clocks.begin()->second._period, _falling_same_cycle);
       
       // compute the cppr credit if any
       if(_cppr_analysis) {

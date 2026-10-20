@@ -83,6 +83,10 @@ class Timer {
     // Enabled by default; disable before building gates to match OpenSTA's
     // default (sta_preset_clear_arcs_enabled false). Recovery/removal checks stay.
     Timer& preset_clear_arcs(bool);
+    // Falling-edge checks capture rising-edge launches in the same cycle
+    // (half-cycle paths, e.g. a negative-edge clock-gate enable flop); default
+    // keeps the full-period capture.
+    Timer& falling_edge_same_cycle(bool);
     Timer& set_time_unit(second_t);
     Timer& set_capacitance_unit(farad_t);
     Timer& set_resistance_unit(ohm_t);
@@ -164,6 +168,7 @@ class Timer {
     
     bool _scc_analysis {false};
     bool _preset_clear_arcs {true};
+    bool _falling_same_cycle {false};
 
     std::optional<tf::Task> _lineage;
     std::optional<CpprAnalysis> _cppr_analysis;
