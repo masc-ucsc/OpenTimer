@@ -165,6 +165,9 @@ class Pin {
     std::array<const SlewThresholds*, 2> _default_thresholds {nullptr, nullptr};
     bool _ideal_clock {false};
     Clock* _ideal_clock_source {nullptr};
+    // Ideal clock reaching this clock sink (the fastest one when several do);
+    // setup checks at the sink use its period.
+    Clock* _ideal_clock_domain {nullptr};
 
     size_t _idx;
 

@@ -29,6 +29,10 @@ Timer& Timer::set_ideal_clocks(std::vector<std::string> names, std::vector<std::
       if(pin._ideal_clock) _insert_frontier(pin);
       pin._ideal_clock = false;
       pin._ideal_clock_source = nullptr;
+      if(pin._ideal_clock_domain) {
+        pin._ideal_clock_domain = nullptr;
+        _insert_frontier(pin);
+      }
     }
     const auto combinational = [] (const Arc* arc) {
       if(arc->is_net_arc()) return true;
@@ -61,6 +65,9 @@ Timer& Timer::set_ideal_clocks(std::vector<std::string> names, std::vector<std::
         if(!marked.insert(pin).second) continue;
         pin->_ideal_clock = true;
         if(pin == source) pin->_ideal_clock_source = &clock->second;
+        if(!pin->_ideal_clock_domain || clock->second._period < pin->_ideal_clock_domain->_period) {
+          pin->_ideal_clock_domain = &clock->second;
+        }
         _insert_frontier(*pin);
         for(auto* arc : pin->_fanin) if(combinational(arc) && reached.count(&arc->_from)) sinks.push_back(&arc->_from);
       }
@@ -930,8 +937,10 @@ void Timer::_fprop_test(Pin& pin) {
 
     // Update the rat
     for(auto test : pin._tests) {
-      // TODO: currently we assume a single clock...
-      test->_fprop_rat(_clocks.begin()->second._period);
+      // The capture clock is the ideal clock reaching the related (clock) pin;
+      // without one (no ideal clock marking) fall back to the first clock.
+      const auto* domain = test->_arc._from._ideal_clock_domain;
+      test->_fprop_rat(domain ? domain->_period : _clocks.begin()->second._period);
       
       // compute the cppr credit if any
       if(_cppr_analysis) {
