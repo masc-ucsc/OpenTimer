@@ -101,6 +101,11 @@ Pin::Pin(const std::string& name) : _name {name} {
 
 // Procedure: _reset_slew
 void Pin::_reset_slew() {
+  if (_net && _net->_root == this) {
+    _net->_driver = {};
+    _net->_effective_cap = {};
+    _net->_elmore_fallback = {};
+  }
   FOR_EACH_EL_RF(el, rf) {
     _slew[el][rf].reset();
   }

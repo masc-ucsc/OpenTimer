@@ -116,6 +116,25 @@ void Rct::update_rc_timing() {
   _update_delay(nullptr, _root);   
   _update_ldelay(nullptr, _root);  
   _update_response(nullptr, _root);
+  FOR_EACH_EL_RF(el, rf) {
+    const double total = _root->_load[el][rf];
+    double second = 0, third = 0;
+    for (const auto& [name, node] : _nodes) {
+      second += double(node.cap(el, rf)) * node._delay[el][rf];
+      third += double(node.cap(el, rf)) * node._beta[el][rf];
+    }
+    auto& pi = _pi[el][rf];
+    pi = {total, 0, 0};
+    if (second > 0 && third > 0 && std::isfinite(third)) {
+      const double far = second * second / third;
+      const double resistance = third * third / (second * second * second);
+      if (far > 0 && far <= total * 1.0001 && std::isfinite(resistance)) {
+        pi.far_cap = std::min(total, far);
+        pi.near_cap = total - pi.far_cap;
+        pi.resistance = resistance;
+      }
+    }
+  }
 
 }
 
@@ -355,6 +374,12 @@ void Net::_remove_pin(Pin& pin) {
     _root = nullptr;
   }
 
+  _rct = EmptyRct{};
+  _spef_net.reset();
+  _driver = {};
+  _effective_cap = {};
+  _elmore_fallback = {};
+
   // Remove the pin from the pins
   _pins.erase(*(pin._net_satellite));
   pin._net_satellite.reset();
@@ -374,6 +399,12 @@ void Net::_insert_pin(Pin& pin) {
 
   assert(pin._net == nullptr && !pin._net_satellite);
   
+  _rct = EmptyRct{};
+  _spef_net.reset();
+  _driver = {};
+  _effective_cap = {};
+  _elmore_fallback = {};
+
   pin._net_satellite = _pins.insert(_pins.end(), &pin);
   pin._net = this;
 
@@ -403,6 +434,45 @@ float Net::_load(Split m, Tran t) const {
       return rct._root->_load[m][t];
     }
   }, _rct);
+}
+
+std::optional<RcGateResult> Net::_gate_response(const Timing& timing, Split split,
+                                                Tran input, Tran output, float slew, const SlewThresholds* thresholds) const {
+  const auto* tree = std::get_if<Rct>(&_rct);
+  if (!tree || !_root) return {};
+  const auto table = [&](double cap) -> std::optional<std::pair<double,double>> {
+    const auto delay = timing.delay(input, output, slew, cap);
+    const auto transition = timing.slew(input, output, slew, cap);
+    if (!delay || !transition || !std::isfinite(*delay) || !std::isfinite(*transition)) return {};
+    return std::pair<double,double>{*delay,*transition};
+  };
+  return rc_effective_gate(tree->_pi[split][output], thresholds ? *thresholds : _root->thresholds(split), output, table);
+}
+
+// Threshold-aware one-pole response of this net, in the sink library's units.
+std::optional<RcResponse> Net::_response(Split m, Tran t, float si, Pin& to) const {
+  const auto tau = _delay(m, t, to);
+  if (!tau || !_root) return std::nullopt;
+  if (_elmore_fallback[m][t]) {
+    // A load-insensitive or otherwise unfit Liberty driver does not justify
+    // inventing an output waveform. Retain its characterized transition and
+    // use the Elmore upper-bound approximation for this annotated net.
+    const auto& from = _root->thresholds(m);
+    const auto& sink = to.thresholds(m);
+    const double duration = si * from.derate / from.span(t);
+    const double shift = duration * (sink.input[t] - from.output[t]);
+    return RcResponse{float(*tau + (t == RISE ? shift : -shift)),
+                      float(duration * sink.span(t) / sink.derate)};
+  }
+  if (const auto& driver = _driver[m][t]) {
+    const auto& sink = to.thresholds(m);
+    const auto progress = [t](double v) { return t == RISE ? v : 1-v; };
+    const double low = progress(sink.lower[t]), high = progress(sink.upper[t]);
+    const double delay = driver->crossing(progress(sink.input[t]), *tau) - driver->logic_time;
+    const double slew = std::abs(driver->crossing(high, *tau) - driver->crossing(low, *tau)) / sink.derate;
+    return RcResponse{float(delay), float(slew)};
+  }
+  return rc_wire_response(*tau, si, _root->thresholds(m), to.thresholds(m), t);
 }
 
 // Function: _slew

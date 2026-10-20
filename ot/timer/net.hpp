@@ -3,6 +3,7 @@
 
 #include <ot/spef/spef.hpp>
 #include <ot/timer/pin.hpp>
+#include <ot/timer/rc_ceff.hpp>
 #include <ot/traits.hpp>
 
 namespace ot {
@@ -114,6 +115,7 @@ class Rct {
   private:
 
     RctNode* _root {nullptr};
+    TimingData<RcPi, MAX_SPLIT, MAX_TRAN> _pi;
 
     std::unordered_map<std::string, RctNode> _nodes;
     std::list<RctEdge> _edges;
@@ -161,6 +163,8 @@ class Net {
 
     inline const Rct* rct() const;
     float load(Split s, Tran t) const { return _load(s,t); }
+    std::optional<float> effective_load(Split s, Tran t) const { return _effective_cap[s][t]; }
+    bool elmore_fallback(Split s, Tran t) const { return _elmore_fallback[s][t]; }
 
   private:
 
@@ -175,11 +179,16 @@ class Net {
     std::optional<spef::Net> _spef_net;
 
     bool _rc_timing_updated {false};
+    TimingData<std::optional<RcDriver>, MAX_SPLIT, MAX_TRAN> _driver;
+    TimingData<std::optional<float>, MAX_SPLIT, MAX_TRAN> _effective_cap;
+    TimingData<bool, MAX_SPLIT, MAX_TRAN> _elmore_fallback {};
 
     float _load(Split, Tran) const;
+    std::optional<RcGateResult> _gate_response(const Timing&, Split, Tran, Tran, float, const SlewThresholds* = nullptr) const;
 
     std::optional<float> _slew(Split, Tran, float, Pin&) const;
     std::optional<float> _delay(Split, Tran, Pin&) const;
+    std::optional<RcResponse> _response(Split, Tran, float, Pin&) const;
     
     void _update_rc_timing();
     void _attach(spef::Net&&);
