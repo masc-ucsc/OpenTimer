@@ -77,6 +77,7 @@ class Timer {
     Timer& set_load(std::string, Split, Tran, std::optional<float>);
     Timer& create_clock(std::string, float);
     Timer& create_clock(std::string, std::string, float);
+    Timer& create_clock(std::string, std::string, float, std::array<float, MAX_TRAN>);
     Timer& cppr(bool);
     Timer& set_time_unit(second_t);
     Timer& set_capacitance_unit(farad_t);
@@ -310,6 +311,7 @@ class Timer {
     SCC& _insert_scc(std::vector<Pin*>&);
     Test& _insert_test(Arc&);
     Clock& _create_clock(const std::string&, Pin&, float);
+    Clock& _create_clock(const std::string&, Pin&, float, std::array<float, MAX_TRAN>);
     Clock& _create_clock(const std::string&, float);
 
     std::optional<float> _report_at(const std::string&, Split, Tran);

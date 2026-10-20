@@ -572,6 +572,26 @@ Timer& Timer::create_clock(std::string c, std::string s, float p) {
 }
 
 // Function: create_clock
+// Clock on a source pin with an explicit {rise, fall} waveform (SDC -waveform).
+Timer& Timer::create_clock(std::string c, std::string s, float p, std::array<float, MAX_TRAN> w) {
+
+  std::scoped_lock lock(_mutex);
+
+  auto op = _taskflow.emplace([this, c=std::move(c), s=std::move(s), p, w] () {
+    if(auto itr = _pins.find(s); itr != _pins.end()) {
+      _create_clock(c, itr->second, p, w);
+    }
+    else {
+      OT_LOGE("can't create clock ", c, " on source ", s, " (pin not found)");
+    }
+  });
+
+  _add_to_lineage(op);
+
+  return *this;
+}
+
+// Function: create_clock
 Timer& Timer::create_clock(std::string c, float p) {
   
   std::scoped_lock lock(_mutex);
@@ -588,6 +608,13 @@ Timer& Timer::create_clock(std::string c, float p) {
 // Procedure: _create_clock
 Clock& Timer::_create_clock(const std::string& name, Pin& pin, float period) {
   auto& clock = _clocks.try_emplace(name, name, pin, period).first->second;
+  _insert_frontier(pin);
+  return clock;
+}
+
+// Procedure: _create_clock
+Clock& Timer::_create_clock(const std::string& name, Pin& pin, float period, std::array<float, MAX_TRAN> waveform) {
+  auto& clock = _clocks.try_emplace(name, name, pin, period, waveform).first->second;
   _insert_frontier(pin);
   return clock;
 }
