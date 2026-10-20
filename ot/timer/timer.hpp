@@ -79,6 +79,10 @@ class Timer {
     Timer& create_clock(std::string, std::string, float);
     Timer& create_clock(std::string, std::string, float, std::array<float, MAX_TRAN>);
     Timer& cppr(bool);
+    // Async preset/clear -> output arcs (Liberty timing_type preset/clear).
+    // Enabled by default; disable before building gates to match OpenSTA's
+    // default (sta_preset_clear_arcs_enabled false). Recovery/removal checks stay.
+    Timer& preset_clear_arcs(bool);
     Timer& set_time_unit(second_t);
     Timer& set_capacitance_unit(farad_t);
     Timer& set_resistance_unit(ohm_t);
@@ -159,6 +163,7 @@ class Timer {
     int _state {0};
     
     bool _scc_analysis {false};
+    bool _preset_clear_arcs {true};
 
     std::optional<tf::Task> _lineage;
     std::optional<CpprAnalysis> _cppr_analysis;

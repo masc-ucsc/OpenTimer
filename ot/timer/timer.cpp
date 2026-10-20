@@ -529,6 +529,22 @@ Timer& Timer::cppr(bool flag) {
   return *this;
 }
 
+// Function: preset_clear_arcs
+// Gates inserted after this call (in lineage order) include or skip their
+// async preset/clear -> output arcs.
+Timer& Timer::preset_clear_arcs(bool flag) {
+
+  std::scoped_lock lock(_mutex);
+
+  auto op = _taskflow.emplace([this, flag] () {
+    _preset_clear_arcs = flag;
+  });
+
+  _add_to_lineage(op);
+
+  return *this;
+}
+
 // Procedure: _cppr
 // Enable/Disable common path pessimism removal (cppr) analysis
 void Timer::_cppr(bool enable) {

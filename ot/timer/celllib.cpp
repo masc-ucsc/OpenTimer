@@ -5,6 +5,10 @@ namespace ot {
 // Function: _is_redundant_timing
 bool Timer::_is_redundant_timing(const Timing& timing, Split el) const {
 
+  if(!_preset_clear_arcs && timing.type && (*timing.type == TimingType::PRESET || *timing.type == TimingType::CLEAR)) {
+    return true;
+  }
+
   switch(el) {
     case MIN:
       if(timing.is_max_constraint()) {
