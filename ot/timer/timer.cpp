@@ -1,4 +1,6 @@
 #include <ot/timer/timer.hpp>
+#include <map>
+#include <tuple>
 
 namespace ot {
 
@@ -158,9 +160,37 @@ void Timer::_repower_gate(const std::string& gname, const std::string& cname) {
     
     gate._cell = cell;
 
+    // Case-analysis masks belong to the gate's pins and function, not to the
+    // drive strength: carry them over to the rebuilt arcs (same from/to pins and
+    // the same `when` condition), as a full analysis of the new cell would.
+    std::map<std::tuple<const Pin*, const Pin*, std::string>, std::uint8_t> masks;
+    const auto key = [] (const Arc& arc) {
+      std::string when;
+      for(auto el : {MAX, MIN}) {
+        if(const auto* tm = arc.timing_view()[el]; tm && tm->when) {
+          when = *tm->when;
+          break;
+        }
+      }
+      return std::tuple<const Pin*, const Pin*, std::string>{&arc._from, &arc._to, when};
+    };
+    for(auto arc : gate._arcs) {
+      if(arc->_case_mask != 15) {
+        masks[key(*arc)] = arc->_case_mask;
+      }
+    }
+
     // reconstruct the timing and tests
     _remove_gate_arcs(gate);
     _insert_gate_arcs(gate);
+
+    if(!masks.empty()) {
+      for(auto arc : gate._arcs) {
+        if(const auto it = masks.find(key(*arc)); it != masks.end()) {
+          arc->_case_mask = it->second;
+        }
+      }
+    }
 
     // Insert the gate to the frontier
     for(auto pin : gate._pins) {
