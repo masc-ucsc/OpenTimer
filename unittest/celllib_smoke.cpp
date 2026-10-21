@@ -66,13 +66,13 @@ TEST_F(CelllibSmoke, TemplateAxesAndBusAttributes) {
   lib.read(path);
   const auto* cell = lib.cell("RAM");
   ASSERT_NE(cell, nullptr);
-  EXPECT_EQ(cell->cellpins.size(), 9);
+  EXPECT_EQ(cell->cellpins.size(), 9u);
   for (int bit = 0; bit < 4; ++bit) {
     const auto* input = cell->cellpin("A[" + std::to_string(bit) + "]");
     ASSERT_NE(input, nullptr);
     EXPECT_EQ(input->direction, ot::CellpinDirection::INPUT);
     EXPECT_EQ(input->capacitance, 0.25f);
-    ASSERT_EQ(input->timings.size(), 1);
+    ASSERT_EQ(input->timings.size(), 1u);
     const auto& lut = input->timings.front().rise_constraint;
     ASSERT_TRUE(lut);
     EXPECT_EQ(lut->indices1, (std::vector<float>{1, 2}));
@@ -81,7 +81,7 @@ TEST_F(CelllibSmoke, TemplateAxesAndBusAttributes) {
     const auto* output = cell->cellpin("Q[" + std::to_string(bit) + "]");
     ASSERT_NE(output, nullptr);
     EXPECT_EQ(output->direction, ot::CellpinDirection::OUTPUT);
-    ASSERT_EQ(output->timings.size(), 1);
+    ASSERT_EQ(output->timings.size(), 1u);
     const auto& out_lut = output->timings.front().cell_rise;
     ASSERT_TRUE(out_lut);
     EXPECT_EQ(out_lut->indices1, (std::vector<float>{7}));
@@ -264,7 +264,7 @@ TEST_F(CelllibSmoke, ConcatenatedLibrariesRebaseUnitsAndKeepScopedDefaults) {
     }
   )lib");
   const auto libraries = ot::Celllib::read_all(path);
-  ASSERT_EQ(libraries.size(), 2);
+  ASSERT_EQ(libraries.size(), 2u);
   EXPECT_FLOAT_EQ(libraries[0].cell("BUF")->cellpin("A")->capacitance.value(), 2);
   EXPECT_FLOAT_EQ(libraries[1].cell("RAM")->cellpin("CLK")->capacitance.value(), .025);
   ot::Timer timer;

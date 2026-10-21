@@ -92,8 +92,9 @@ TEST(RcCeff, DriverWaveformMatchesNumericalPiCircuit) {
     const double df = transfer / pi.far_cap;
     near += dt * dn;
     far += dt * df;
-    if (k % 50000 == 49999)
+    if (k % 50000 == 49999) {
       EXPECT_NEAR(near, fit->driver.voltage((k + 1) * dt), 2e-5);
+    }
   }
 }
 TEST(RcCeff, UncharacterizedOrInvalidFitFallsBack) {
