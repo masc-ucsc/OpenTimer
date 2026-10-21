@@ -26,6 +26,36 @@ TEST(RcCeff, CascadedPolesMatchStepCircuit) {
     EXPECT_NEAR(ot::rc_cascade_voltage(t, 100, 100, 0), repeated, 1e-7);
   }
 }
+TEST(RcCeff, PreparedCrossingMatchesDirectWaveformEvaluationExactly) {
+  const auto direct = [](const ot::RcDriver& d, double v, double wire) {
+    double lo = 0, hi = d.duration;
+    if (hi <= 0) hi = std::max({d.slow, d.fast, wire});
+    if (hi <= 0) return 0.;
+    for (int k = 0; k < 128 && d.voltage(hi, wire) < v; ++k) hi *= 2;
+    if (!std::isfinite(hi) || d.voltage(hi, wire) < v)
+      return std::numeric_limits<double>::infinity();
+    for (int k = 0; k < 36; ++k) {
+      const double mid = (lo + hi) * .5;
+      if (d.voltage(mid, wire) < v) lo = mid;
+      else hi = mid;
+    }
+    return (lo + hi) * .5;
+  };
+  for (double slow : {.01, 1., 100.})
+    for (double fast : {0., slow * .01, slow * .99999, slow})
+      for (double duration : {0., .01, 1., 100.})
+        for (double wire : {0., .01, 1., 100., slow, slow * .99999})
+          for (double weight : {0., .2, 1.})
+            for (double v : {.01, .1, .5, .9, .99}) {
+              ot::RcDriver d;
+              d.slow = slow;
+              d.fast = fast;
+              d.duration = duration;
+              d.slow_weight = weight;
+              EXPECT_EQ(d.crossing(v, wire), direct(d, v, wire));
+            }
+}
+
 TEST(RcCeff, ResistanceShieldsRemoteCapacitance) {
   ot::SlewThresholds thresholds;
   thresholds.lower = {.1f, .1f};

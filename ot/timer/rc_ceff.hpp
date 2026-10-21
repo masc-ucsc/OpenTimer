@@ -1,5 +1,6 @@
 // This file is distributed under the MIT License. See LICENSE for details.
 #pragma once
+#include <array>
 #include <limits>
 #include <optional>
 #include <ot/timer/rc_waveform.hpp>
@@ -62,13 +63,49 @@ struct RcDriver {
       hi = std::max({slow, fast, wire_tau});
     if (hi <= 0)
       return 0;
-    for (int k = 0; k < 128 && voltage(hi, wire_tau) < v; ++k)
+    // The tail coefficient depends only on the pole and ramp duration.
+    // Reuse it across the bracket search and all bisection evaluations; keep
+    // the original expression order so crossing values remain identical.
+    const auto tail = [this](double tau) {
+      return tau > 0 && duration > 0
+                 ? -std::expm1(-duration / tau) * tau / duration : 0.;
+    };
+    const auto prepare = [&](double a, double b) {
+      if (a <= 0)
+        return std::array<double, 4>{b, 0, tail(b), 0};
+      if (b <= 0)
+        return std::array<double, 4>{a, 0, tail(a), 0};
+      if (std::abs(a - b) < 1e-4 * std::max(a, b)) {
+        const double mean = (a + b) * .5;
+        a = mean * 1.00005;
+        b = mean * .99995;
+      }
+      return std::array<double, 4>{a, b, tail(a), tail(b)};
+    };
+    const auto ramp = [this](double t, double tau, double coefficient) {
+      if (tau > 0 && duration > 0 && t >= duration)
+        return 1 - coefficient * std::exp(-(t - duration) / tau);
+      return rc_ramp_voltage(t, tau, duration);
+    };
+    const auto response = [&](double t, const std::array<double, 4>& poles) {
+      if (poles[1] <= 0)
+        return ramp(t, poles[0], poles[2]);
+      return (poles[0] * ramp(t, poles[0], poles[2]) -
+              poles[1] * ramp(t, poles[1], poles[3])) / (poles[0] - poles[1]);
+    };
+    const auto slow_poles = prepare(slow, wire_tau <= 0 ? 0 : wire_tau);
+    const auto fast_poles = prepare(fast, wire_tau <= 0 ? 0 : wire_tau);
+    const auto sample = [&](double t) {
+      return slow_weight * response(t, slow_poles) +
+             (1 - slow_weight) * response(t, fast_poles);
+    };
+    for (int k = 0; k < 128 && sample(hi) < v; ++k)
       hi *= 2;
-    if (!std::isfinite(hi) || voltage(hi, wire_tau) < v)
+    if (!std::isfinite(hi) || sample(hi) < v)
       return std::numeric_limits<double>::infinity();
     for (int k = 0; k < 36; ++k) {
       const double mid = (lo + hi) * .5;
-      if (voltage(mid, wire_tau) < v)
+      if (sample(mid) < v)
         lo = mid;
       else
         hi = mid;
