@@ -559,6 +559,13 @@ parasitics after editing connectivity. Repowering with unchanged connectivity
 retains wire RC and recalculates the driver response. The model does not call
 OpenROAD or OpenSTA.
 
+Single-pole threshold queries reuse the ramp ratio, tail coefficient and lazy
+logarithm within one wire response or fitting iteration. Each prepared ramp
+is local to that evaluation and keeps immutable input parameters; no mutable
+cache is shared across pins or threads. The scalar crossing API and solver
+arithmetic remain unchanged. This reduces repeated transcendental work without
+changing the circuit model.
+
 Analytic waveform, Pi-circuit integration, shielding, failure fallback and
 incremental replacement checks are in `unittest/rc_waveform.cpp` and
 `unittest/rc_ceff.cpp`.

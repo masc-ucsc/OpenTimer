@@ -1,6 +1,8 @@
 // This file is distributed under the MIT License. See LICENSE for details.
+#include <array>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <gtest/gtest.h>
 #include <ot/timer/rc_waveform.hpp>
 #include <ot/timer/timer.hpp>
@@ -46,6 +48,40 @@ TEST(RcWaveform, FiniteRampCrossingSatisfiesCircuitEquation) {
                                    std::exp(-(t - duration) / tau);
         EXPECT_NEAR(y, v, 2e-7) << tau << ' ' << duration << ' ' << v;
       }
+    }
+  }
+}
+
+TEST(RcWaveform, PreparedRampHandlesRepeatedOutOfOrderBoundaryQueries) {
+  // Exercise both solver boundaries and the ramp/tail crossing. The circuit
+  // equation below is independent of the threshold solver and cached values.
+  for (double boundary : {1e-4, 1e8}) {
+    for (double ratio : {std::nextafter(boundary, 0.), boundary,
+                         std::nextafter(boundary,
+                                        std::numeric_limits<double>::infinity())}) {
+      const double tau = 100, duration = tau * ratio;
+      const double r = duration / tau;
+      const double end_voltage =
+          r < 1e-4 ? r * (.5 - r / 6 + r * r / 24)
+                   : 1 + std::expm1(-r) / r;
+      const std::array<double, 6> voltages{
+          .8, .2, std::nextafter(end_voltage, 0.), end_voltage,
+          std::nextafter(end_voltage, 1.), .5};
+      ot::detail::RcRamp ramp(tau, duration);
+      std::array<double, 6> crossings{};
+      for (size_t i = 0; i < voltages.size(); ++i) {
+        const double t = ramp.crossing(voltages[i]);
+        ASSERT_TRUE(std::isfinite(t));
+        crossings[i] = t;
+        const long double x = t, pole = tau, width = duration;
+        const long double y =
+            x < width ? (x + pole * std::expm1(-x / pole)) / width
+                      : 1 - (pole / width) * -std::expm1(-width / pole) *
+                                std::exp(-(x - width) / pole);
+        EXPECT_NEAR(y, voltages[i], 2e-6) << ratio << ' ' << voltages[i];
+      }
+      for (size_t i = voltages.size(); i-- > 0;)
+        EXPECT_EQ(ramp.crossing(voltages[i]), crossings[i]);
     }
   }
 }

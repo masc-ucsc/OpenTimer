@@ -141,8 +141,8 @@ inline std::optional<double> rc_fit_ramp(double tau, double target, double low,
     return 1 + (r > 700 ? 0 : 1 / std::expm1(r)) - 1 / r;
   };
   for (int k = 0; k < 24; ++k) {
-    const double a = rc_ramp_crossing(tau, t, logic),
-                 b = rc_ramp_crossing(tau, t, low);
+    detail::RcRamp ramp(tau, t);
+    const double a = ramp.crossing(logic), b = ramp.crossing(low);
     const double error = a - b - target;
     if (std::abs(error) < 1e-7 * target)
       return t;
