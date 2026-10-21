@@ -532,3 +532,33 @@ You can find a copy of these licenses under the folder [licenses](licenses).
 [OSUPDK]:                https://vlsiarch.ecen.okstate.edu/flow/
 [Synopsys TAP-in]:       https://www.synopsys.com/community/interoperability-programs/tap-in.html
  
+
+
+## Native RC timing model
+
+The timer reduces an annotated RC tree to a driving-point Pi network using
+its first three admittance moments. Characterized cell drivers and SDC driving
+cells use a bounded effective-capacitance fit: the ramp/Thevenin driver matches
+Liberty timing and the charge drawn by that Pi network. This follows the
+[Dartu, Menezes, Qian and Pillage gate-delay model](https://doi.org/10.1145/196244.196562),
+with an independently implemented scalar fit. Uncharacterized or failed fits
+keep full-load NLDM timing and Elmore wire delay, preserving the characterized
+transition (with sink-library threshold conversion). This includes constant-delay
+SRAM tables, which cannot supply a driver-resistance fit.
+
+Wire delay and slew are voltage crossings of the driver/RC waveform, using
+library-specific rise/fall thresholds and slew derate. A single-pole step has
+50-percent delay `tau * ln(2)` and 20-to-80-percent slew `tau * ln(4)`; its
+Elmore time constant alone is not a voltage-threshold delay. Zero-RC nets retain
+normal Liberty timing. Physical load remains available through `Net::load`;
+`Net::effective_load` separately exposes the selected driver model's load.
+
+RC annotations describe a particular connectivity. A pin insertion or removal
+invalidates that net's old RC tree, including old pin references. Reattach its
+parasitics after editing connectivity. Repowering with unchanged connectivity
+retains wire RC and recalculates the driver response. The model does not call
+OpenROAD or OpenSTA.
+
+Analytic waveform, Pi-circuit integration, shielding, failure fallback and
+incremental replacement checks are in `unittest/rc_waveform.cpp` and
+`unittest/rc_ceff.cpp`.
