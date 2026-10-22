@@ -44,7 +44,11 @@ TEST(RcCeff, PreparedCrossingMatchesDirectWaveformEvaluationExactly) {
   for (double slow : {.01, 1., 100.})
     for (double fast : {0., slow * .01, slow * .99999, slow})
       for (double duration : {0., .01, 1., 100.})
-        for (double wire : {0., .01, 1., 100., slow, slow * .99999})
+        // Include either cascade's coincident-pole fallback and both sides
+        // of its perturbation threshold, as well as an ordinary shared pole.
+        for (double wire : {0., .01, 1., 100., slow, slow * .99999,
+                            slow * .9998, slow * 1.0002, fast,
+                            fast * .99999, fast * .9998, fast * 1.0002})
           for (double weight : {0., .2, 1.})
             for (double v : {.01, .1, .5, .9, .99}) {
               ot::RcDriver d;

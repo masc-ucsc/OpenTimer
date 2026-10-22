@@ -95,7 +95,24 @@ struct RcDriver {
     };
     const auto slow_poles = prepare(slow, wire_tau <= 0 ? 0 : wire_tau);
     const auto fast_poles = prepare(fast, wire_tau <= 0 ? 0 : wire_tau);
+    // Both cascades usually share the wire pole. Evaluate its ramp once per
+    // sample, retaining the divided-difference arithmetic in each response.
+    // Coincident driver/wire poles can be perturbed differently by prepare;
+    // keep the independent evaluation in that case.
+    const bool shared_wire = slow_poles[1] > 0 &&
+                             slow_poles[1] == fast_poles[1];
     const auto sample = [&](double t) {
+      if (shared_wire) {
+        const double wire = ramp(t, slow_poles[1], slow_poles[3]);
+        const double slow_response =
+            (slow_poles[0] * ramp(t, slow_poles[0], slow_poles[2]) -
+             slow_poles[1] * wire) / (slow_poles[0] - slow_poles[1]);
+        const double fast_response =
+            (fast_poles[0] * ramp(t, fast_poles[0], fast_poles[2]) -
+             fast_poles[1] * wire) / (fast_poles[0] - fast_poles[1]);
+        return slow_weight * slow_response +
+               (1 - slow_weight) * fast_response;
+      }
       return slow_weight * response(t, slow_poles) +
              (1 - slow_weight) * response(t, fast_poles);
     };
