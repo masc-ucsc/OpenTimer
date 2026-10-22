@@ -174,6 +174,39 @@ void build_threshold_chain(ot::Timer& timer) {
   }
 }
 
+TEST_F(CelllibSmoke, TimingPathRecoveryAllowsMissingInternalPower) {
+  write(threshold_libraries());
+  ot::Timer timer;
+  timer.set_num_threads(1);
+  timer.read_celllib(path).update_timing();
+  build_threshold_chain(timer);
+  spef::Spef parasitics;
+  parasitics.capacitance_unit = "1 FF";
+  parasitics.resistance_unit = "1 OHM";
+  for (const auto& [name, driver, sink] : std::vector<std::tuple<std::string, std::string, std::string>>{
+           {"input", "a", "b:A"}, {"middle", "b:Y", "m:A"}, {"output", "m:Y", "y"}}) {
+    spef::Net net(name, 0);
+    net.caps.emplace_back(sink, "", 0);
+    net.ress.emplace_back(driver, sink, 1);
+    parasitics.nets.push_back(std::move(net));
+  }
+  timer.read_parasitics(std::move(parasitics));
+  for (auto split : {ot::MIN, ot::MAX})
+    for (auto tran : {ot::RISE, ot::FALL}) timer.set_rat("y", split, tran, 0);
+  timer.update_timing();
+  ASSERT_TRUE(timer.report_at("y", ot::MAX, ot::RISE));
+  ASSERT_TRUE(timer.report_rat("y", ot::MAX, ot::RISE));
+  for (size_t count : {1U, 4U}) {
+    SCOPED_TRACE(count);
+    const auto paths = timer.report_timing(count, ot::MAX);
+    ASSERT_FALSE(paths.empty());
+    for (const auto& result : paths) {
+      EXPECT_FALSE(result.empty());
+      for (const auto& point : result) EXPECT_EQ(point.ipower, 0);
+    }
+  }
+}
+
 TEST_F(CelllibSmoke, MixedThresholdChainMatchesIndependentOpenStaCalculation) {
   write(threshold_libraries());
   ot::Timer timer;
