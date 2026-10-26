@@ -116,9 +116,14 @@ struct RcDriver {
       return slow_weight * response(t, slow_poles) +
              (1 - slow_weight) * response(t, fast_poles);
     };
-    for (int k = 0; k < 128 && sample(hi) < v; ++k)
+    // The successful bracket sample is also the validity check below. Retain
+    // it rather than evaluating both pole responses again at the same time.
+    double high_voltage = sample(hi);
+    for (int k = 0; k < 128 && high_voltage < v; ++k) {
       hi *= 2;
-    if (!std::isfinite(hi) || sample(hi) < v)
+      high_voltage = sample(hi);
+    }
+    if (!std::isfinite(hi) || high_voltage < v)
       return std::numeric_limits<double>::infinity();
     for (int k = 0; k < 36; ++k) {
       const double mid = (lo + hi) * .5;
