@@ -349,6 +349,10 @@ points continue to report zero internal power. Pin power reporting is unchanged.
 On the supported 64-bit build this reduces `sizeof(Arc)` from 264 to 200 bytes
 and `sizeof(Pin)` from 656 to 560 bytes.
 
+RC-tree nodes use their owning map's labels instead of keeping another string
+per node. Tree/SPEF exporters resolve those labels while writing the report;
+timing propagation does not allocate a second name table.
+
 The example below shows an OpenTimer application and the use of builder, action, and accessor API.
 
 ```cpp

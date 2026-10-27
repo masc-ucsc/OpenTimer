@@ -3,7 +3,9 @@
 namespace ot {
 
 // Constructor
-RctNode::RctNode(const std::string& name) : _name {name} {
+// Names belong to Rct::_nodes. Retain the named constructor for source
+// compatibility; node timing never needs a second copy of the map key.
+RctNode::RctNode(const std::string&) {
 }
 
 // Procedure: _scale_capacitance
@@ -69,8 +71,6 @@ const RctNode* Rct::node(const std::string& name) const {
 void Rct::insert_node(const std::string& name, float cap) {
 
   auto& node = _nodes[name];
-
-  node._name = name;
 
   FOR_EACH_EL_RF(el, rf) {
     node._ncap[el][rf] = cap;

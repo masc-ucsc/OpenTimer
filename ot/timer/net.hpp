@@ -36,8 +36,6 @@ class RctNode {
 
   private:
 
-    std::string _name;                           
-
     TimingData<float, MAX_TRAN, MAX_SPLIT> _ures   ; 
     TimingData<float, MAX_TRAN, MAX_SPLIT> _ncap   ;
     TimingData<float, MAX_TRAN, MAX_SPLIT> _load   ; 

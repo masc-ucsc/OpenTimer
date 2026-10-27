@@ -526,9 +526,13 @@ void Timer::_dump_rctree(std::ostream& os) const {
       continue;
     }
 
+    // Resolve labels only when exporting. Keeping one on every RC node would
+    // duplicate the owning map's strings throughout timing/placement.
+    std::unordered_map<const RctNode*, const std::string*> names;
+    for(const auto& [name, node] : rct->_nodes) names.emplace(&node, &name);
     os << rct->_nodes.size() << ' '
        << rct->_edges.size() << ' '
-       << rct->_root->_name  << '\n';
+       << (rct->_root ? *names.at(rct->_root) : "nil") << '\n';
 
     for(const auto& [node_name, node] : rct->_nodes) {
       os << node_name << ' ' << node._ncap[MIN][RISE] << '\n';
@@ -571,7 +575,7 @@ void Timer::_dump_rctree(std::ostream& os) const {
     }
 
     for(const auto& edge : rct->_edges) {
-      os << edge._from._name << ' ' << edge._to._name << ' ' << edge._res << '\n';
+      os << *names.at(&edge._from) << ' ' << *names.at(&edge._to) << ' ' << edge._res << '\n';
     }
   }
 
@@ -667,7 +671,9 @@ void Timer::_dump_spef(std::ostream& os) const {
 
       // *CAP section
       os << "*CAP\n";
+      std::unordered_map<const RctNode*, const std::string*> names;
       for(const auto& node : rct->_nodes) {
+        names.emplace(&node.second, &node.first);
         os << ++idx << ' ' << node.first << ' ' << node.second._ncap[MIN][RISE] << '\n';
       }
 
@@ -678,8 +684,8 @@ void Timer::_dump_spef(std::ostream& os) const {
         ++idx;
         if(idx & 1) {
           os << idx << ' '
-             << edge._from._name << ' '
-             << edge._to._name << ' '
+             << *names.at(&edge._from) << ' '
+             << *names.at(&edge._to) << ' '
              << edge._res << '\n';
         }
       }

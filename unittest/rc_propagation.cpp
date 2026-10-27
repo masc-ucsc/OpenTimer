@@ -94,6 +94,52 @@ TEST_F(RcPropagation, RcSlewAndModelChangesRefreshBothTimingResults) {
   }
 }
 
+TEST_F(RcPropagation, RcLabelsSurviveRehashAndIncrementalReplacement) {
+  constexpr int segments = 40;
+  // RC products use the timer units: kOhm * fF = ps.
+  timer.set_resistance_unit(ot::ohm_t(1000));
+  timer.set_rc_model(ot::RcModel::elmore);
+  transition(20);
+  for (const auto suffix : {"first", "replacement"}) {
+    // Long, temporary labels exercise ownership across map growth and SPEF
+    // destruction. Only the root and sink correspond to timer pins.
+    std::vector<std::string> labels{"a"};
+    for (int i = 1; i < segments; ++i)
+      labels.push_back(std::string(100, 'x') + suffix + std::to_string(i));
+    labels.push_back("y");
+    {
+      spef::Spef data;
+      data.capacitance_unit = "1 FF";
+      data.resistance_unit = "1 KOHM";
+      spef::Net net("a", segments);
+      for (int i = 0; i <= segments; ++i) {
+        net.caps.emplace_back(labels[i], "", i ? 1.f : 0.f);
+        if (i)
+          net.ress.emplace_back(labels[i - 1], labels[i], 1.f);
+      }
+      data.nets.push_back(std::move(net));
+      timer.read_parasitics(std::move(data));
+    }
+    timer.update_timing();
+    const auto arrival = timer.report_at("y", ot::MAX, ot::RISE);
+    ASSERT_TRUE(arrival);
+    EXPECT_NEAR(*arrival, segments * (segments + 1) / 2.f, .001f);
+    std::ostringstream tree, spef;
+    timer.dump_rctree(tree);
+    timer.dump_spef(spef);
+    EXPECT_NE(tree.str().find("a 41 80 a\n"), std::string::npos);
+    for (int i = 1; i <= segments; ++i) {
+      const auto edge = labels[i - 1] + " " + labels[i] + " 1\n";
+      EXPECT_NE(tree.str().find(edge), std::string::npos);
+      EXPECT_NE(spef.str().find(edge), std::string::npos);
+    }
+    if (std::string_view(suffix) == "replacement") {
+      EXPECT_EQ(tree.str().find("first"), std::string::npos);
+      EXPECT_EQ(spef.str().find("first"), std::string::npos);
+    }
+  }
+}
+
 TEST_F(RcPropagation, MissingSlewKeepsDelayButDoesNotInventASlew) {
   parasitics(1000);
   transition(20);
