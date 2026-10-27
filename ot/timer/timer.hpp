@@ -55,6 +55,10 @@ class Timer {
       _add_to_lineage(reader);
       return *this;
     }
+    // Apply a bounded batch to a materialized netlist. Replace RC storage now,
+    // retaining timing frontiers for one later propagation across all batches.
+    // Unlike read_parasitics, no SPEF payload survives this call.
+    void update_parasitics(spef::Spef);
     Timer& read_sdc(std::filesystem::path);
     Timer& read_timing(std::filesystem::path);
     // Explicit analysis annotation. Existing create_clock behavior is unchanged.
@@ -261,7 +265,7 @@ class Timer {
     void _build_bprop_cands(Pin&);
     void _build_prop_tasks();
     void _clear_prop_tasks();
-    void _read_spef(spef::Spef&);;
+    void _read_spef(spef::Spef &, bool materialize = false);
     void _verilog(vlog::Module&);
     void _timing(tau15::Timing&);
     void _read_sdc(sdc::SDC&);

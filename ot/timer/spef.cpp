@@ -36,8 +36,16 @@ Timer& Timer::read_spef(std::filesystem::path path) {
   return *this;
 }
 
+void Timer::update_parasitics(spef::Spef value) {
+  std::scoped_lock lock(_mutex);
+  _update_netlist();
+  _rebase_unit(value);
+  _read_spef(value, true);
+  _remove_state(EPTS_UPDATED | AREA_UPDATED | POWER_UPDATED);
+}
+
 // Procedure: _read_spef
-void Timer::_read_spef(spef::Spef& spef) {
+void Timer::_read_spef(spef::Spef &spef, bool materialize) {
   for(auto& spef_net : spef.nets) {
     if(auto itr = _nets.find(spef_net.name); itr == _nets.end()) {
       OT_LOGW("spef net ", spef_net.name, " not found");
@@ -45,6 +53,9 @@ void Timer::_read_spef(spef::Spef& spef) {
     }
     else {
       itr->second._attach(std::move(spef_net));
+      if (materialize) {
+        itr->second._make_rct();
+      }
       _insert_frontier(*itr->second._root);
     }
   }

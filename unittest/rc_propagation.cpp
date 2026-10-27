@@ -94,6 +94,63 @@ TEST_F(RcPropagation, RcSlewAndModelChangesRefreshBothTimingResults) {
   }
 }
 
+TEST_F(RcPropagation, ImmediateRcBatchesPreserveFrontiersWithoutPropagating) {
+  // RC products use the timer units: kOhm * fF = ps.
+  timer.set_resistance_unit(ot::ohm_t(1000));
+  transition(20);
+  parasitics(100);
+  check(20, ot::RcModel::effective_capacitance);
+  timer.insert_primary_input("b").insert_primary_output("z");
+  timer.disconnect_pin("z").connect_pin("z", "b");
+  for (auto split : {ot::MIN, ot::MAX}) {
+    for (auto tran : {ot::RISE, ot::FALL}) {
+      timer.set_at("b", split, tran, 3).set_slew("b", split, tran, 20);
+    }
+  }
+  const auto batch = [](const std::string &root, const std::string &sink,
+                        float resistance) {
+    spef::Spef data;
+    data.capacitance_unit = "1 FF";
+    data.resistance_unit = "1 OHM";
+    spef::Net net(root, 10);
+    net.caps.emplace_back(root, "", 2);
+    net.caps.emplace_back(sink, "", 8);
+    net.ress.emplace_back(root, sink, 1000 * resistance);
+    data.nets.push_back(std::move(net));
+    return data;
+  };
+  for (auto model : {ot::RcModel::elmore, ot::RcModel::effective_capacitance}) {
+    timer.set_rc_model(model);
+    for (float resistance : {1.f, 2.f, .5f}) {
+      const auto old_arrival = timer.pins().at("y").at(ot::MAX, ot::RISE);
+      timer.update_parasitics(batch("a", "y", resistance));
+      // The temporary SPEF has gone; its replacement tree is already owned.
+      ASSERT_NE(timer.pins().at("a").net()->rct(), nullptr);
+      EXPECT_EQ(timer.pins().at("y").at(ot::MAX, ot::RISE), old_arrival);
+      timer.update_parasitics(batch("b", "z", 2 * resistance));
+      EXPECT_EQ(timer.pins().at("y").at(ot::MAX, ot::RISE), old_arrival);
+      check(20, model); // One propagation must retain both batches' frontiers.
+      for (auto split : {ot::MIN, ot::MAX}) {
+        for (auto tran : {ot::RISE, ot::FALL}) {
+          EXPECT_FLOAT_EQ(
+              timer.pins().at("a").net()->rct()->node("y")->delay(split, tran),
+              8 * resistance);
+          const auto &from = timer.pins().at("b");
+          const auto &sink = timer.pins().at("z");
+          const auto delay =
+              model == ot::RcModel::elmore
+                  ? 16 * resistance
+                  : ot::rc_wire_response(16 * resistance, 20,
+                                         from.thresholds(split),
+                                         sink.thresholds(split), tran)
+                        .delay;
+          EXPECT_FLOAT_EQ(*sink.at(split, tran), 3 + delay);
+        }
+      }
+    }
+  }
+}
+
 TEST_F(RcPropagation, RcLabelsSurviveRehashAndIncrementalReplacement) {
   constexpr int segments = 40;
   // RC products use the timer units: kOhm * fF = ps.

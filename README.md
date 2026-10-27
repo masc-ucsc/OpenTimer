@@ -342,6 +342,13 @@ created on the first action and can be resized between actions without losing
 queued builders or incremental timing state. `timer.num_threads()` reports the
 configured worker count, or the actual pool size once created.
 
+`timer.update_parasitics(spef)` applies an in-memory RC batch synchronously.
+It first materializes pending builders, replaces the affected RC trees and
+releases the SPEF payload. It retains all timing frontiers without propagating
+arrival, required time or slew; call `update_timing()` after the last batch.
+This lets placement hosts bound temporary RC storage while updating large
+designs. `read_parasitics` and `read_spef` retain their deferred behavior.
+
 Pin timing provenance uses compact private corner/transition fields while
 keeping the public enum types and timing values unchanged. Arc objects do not
 reserve an internal-power array: that array was never populated, and path
