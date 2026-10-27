@@ -81,6 +81,54 @@ protected:
   }
 };
 
+TEST_F(RcPropagation, MissingTimingRecordsStayMissingAfterClearAndRepopulate) {
+  parasitics(1000);
+  for (unsigned workers : {1U, 3U}) {
+    timer.set_num_threads(workers);
+    for (int repeat = 0; repeat < 3; ++repeat) {
+      for (auto split : {ot::MIN, ot::MAX}) {
+        for (auto tran : {ot::RISE, ot::FALL}) {
+          timer.set_at("a", split, tran, float(10 + repeat + 2 * split + tran));
+          timer.set_slew("a", split, tran, float(20 + repeat + tran));
+          timer.set_rat("y", split, tran, float(100 + repeat + split + 2 * tran));
+        }
+      }
+      timer.update_timing();
+      for (const auto& name : {"a", "y"}) {
+        const auto& pin = timer.pins().at(name);
+        for (auto split : {ot::MIN, ot::MAX}) {
+          for (auto tran : {ot::RISE, ot::FALL}) {
+            EXPECT_TRUE(pin.at(split, tran));
+            EXPECT_TRUE(pin.slew(split, tran));
+            EXPECT_TRUE(pin.rat(split, tran));
+            EXPECT_EQ(pin.at(split, tran), timer.report_at(name, split, tran));
+            EXPECT_EQ(pin.slew(split, tran), timer.report_slew(name, split, tran));
+            EXPECT_EQ(pin.rat(split, tran), timer.report_rat(name, split, tran));
+          }
+        }
+      }
+      for (auto split : {ot::MIN, ot::MAX}) {
+        for (auto tran : {ot::RISE, ot::FALL}) {
+          timer.set_at("a", split, tran, std::nullopt);
+          timer.set_slew("a", split, tran, std::nullopt);
+          timer.set_rat("y", split, tran, std::nullopt);
+        }
+      }
+      timer.update_timing();
+      for (const auto& name : {"a", "y"}) {
+        const auto& pin = timer.pins().at(name);
+        for (auto split : {ot::MIN, ot::MAX}) {
+          for (auto tran : {ot::RISE, ot::FALL}) {
+            EXPECT_FALSE(pin.at(split, tran));
+            EXPECT_FALSE(pin.slew(split, tran));
+            EXPECT_FALSE(pin.rat(split, tran));
+          }
+        }
+      }
+    }
+  }
+}
+
 TEST_F(RcPropagation, RcSlewAndModelChangesRefreshBothTimingResults) {
   for (auto model : {ot::RcModel::effective_capacitance, ot::RcModel::elmore,
                      ot::RcModel::effective_capacitance}) {

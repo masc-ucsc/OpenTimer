@@ -69,7 +69,8 @@ void PrimaryInput::_scale_time(float s) {
 Pin::At::At(Arc* a, Split el, Tran rf, float v) : 
   pi_arc {a}, 
   pi_el  {el}, 
-  pi_rf  {rf}, 
+  pi_rf  {rf},
+  valid {true},
   numeric  {v} {
 }
 
@@ -79,7 +80,8 @@ Pin::At::At(Arc* a, Split el, Tran rf, float v) :
 Pin::Slew::Slew(Arc* a, Split el, Tran rf, float v) : 
   pi_arc {a}, 
   pi_el  {el}, 
-  pi_rf  {rf}, 
+  pi_rf  {rf},
+  valid {true},
   numeric  {v} {
 }
 
@@ -89,7 +91,8 @@ Pin::Slew::Slew(Arc* a, Split el, Tran rf, float v) :
 Pin::Rat::Rat(Arc* a, Split el, Tran rf, float v) : 
   pi_arc  {a}, 
   pi_el   {el}, 
-  pi_rf   {rf}, 
+  pi_rf   {rf},
+  valid {true},
   numeric {v} {
 }
 

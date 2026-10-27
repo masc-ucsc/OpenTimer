@@ -81,9 +81,11 @@ class Pin {
   // At storage
   struct At {
     Arc*  pi_arc {nullptr}; 
-    Split pi_el : 8;
-    Tran  pi_rf : 8;
-    float numeric;
+    Split pi_el : 8 {MIN};
+    Tran  pi_rf : 8 {RISE};
+    bool  valid {false};
+    float numeric {0};
+    At() = default;
     At(Arc*, Split, Tran, float);
     inline operator float () const;
     inline auto pi() const;
@@ -92,9 +94,11 @@ class Pin {
   // Slew storage.
   struct Slew {
     Arc*  pi_arc {nullptr};
-    Split pi_el : 8;
-    Tran  pi_rf : 8;
-    float numeric;
+    Split pi_el : 8 {MIN};
+    Tran  pi_rf : 8 {RISE};
+    bool  valid {false};
+    float numeric {0};
+    Slew() = default;
     Slew(Arc*, Split, Tran, float);
     inline operator float () const;
     inline auto pi() const;
@@ -103,12 +107,40 @@ class Pin {
   // Rat storage
   struct Rat {
     Arc*  pi_arc {nullptr};
-    Split pi_el : 8;
-    Tran  pi_rf : 8;
-    float numeric;
+    Split pi_el : 8 {MIN};
+    Tran  pi_rf : 8 {RISE};
+    bool  valid {false};
+    float numeric {0};
+    Rat() = default;
     Rat(Arc*, Split, Tran, float);
     inline operator float () const;
     inline auto pi() const;
+  };
+
+  // Each payload has room for its engagement bit beside the provenance enums.
+  // std::optional otherwise adds an aligned 8-byte flag to every 16-byte
+  // record. Keep all float representations (including NaN) independent of
+  // validity; a missing record is never encoded in its numeric value.
+  template <typename T>
+  class Propagation_optional {
+    T _value;
+
+    public:
+      explicit operator bool() const { return _value.valid; }
+      bool has_value() const { return _value.valid; }
+      void reset() { _value.valid = false; }
+      template <typename... Args>
+      T& emplace(Args&&... args) {
+        _value = T(std::forward<Args>(args)...);
+        return _value;
+      }
+      T& operator*() { return _value; }
+      const T& operator*() const { return _value; }
+      T* operator->() { return &_value; }
+      const T* operator->() const { return &_value; }
+      operator std::optional<float>() const {
+        return _value.valid ? std::optional<float>(_value.numeric) : std::nullopt;
+      }
   };
 
   friend class Timer;
@@ -187,9 +219,9 @@ class Pin {
     std::optional<std::list<Pin*>::iterator> _frontier_satellite;
     std::optional<std::list<Pin*>::iterator> _net_satellite;
 
-    TimingData<std::optional<Slew>, MAX_SPLIT, MAX_TRAN> _slew;
-    TimingData<std::optional<Rat >, MAX_SPLIT, MAX_TRAN> _rat;
-    TimingData<std::optional<At  >, MAX_SPLIT, MAX_TRAN> _at;
+    TimingData<Propagation_optional<Slew>, MAX_SPLIT, MAX_TRAN> _slew;
+    TimingData<Propagation_optional<Rat>, MAX_SPLIT, MAX_TRAN> _rat;
+    TimingData<Propagation_optional<At>, MAX_SPLIT, MAX_TRAN> _at;
 
     int _state {0};
 
