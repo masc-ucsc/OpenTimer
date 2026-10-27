@@ -76,11 +76,13 @@ class PrimaryOutput {
 // Class: Pin
 class Pin {
   
+  // Keep the two-valued provenance enums compact inside each optional record.
+  // Public Split/Tran types and all float values retain their representation.
   // At storage
   struct At {
     Arc*  pi_arc {nullptr}; 
-    Split pi_el;
-    Tran  pi_rf;
+    Split pi_el : 8;
+    Tran  pi_rf : 8;
     float numeric;
     At(Arc*, Split, Tran, float);
     inline operator float () const;
@@ -90,8 +92,8 @@ class Pin {
   // Slew storage.
   struct Slew {
     Arc*  pi_arc {nullptr};
-    Split pi_el;
-    Tran  pi_rf;
+    Split pi_el : 8;
+    Tran  pi_rf : 8;
     float numeric;
     Slew(Arc*, Split, Tran, float);
     inline operator float () const;
@@ -101,8 +103,8 @@ class Pin {
   // Rat storage
   struct Rat {
     Arc*  pi_arc {nullptr};
-    Split pi_el;
-    Tran  pi_rf;
+    Split pi_el : 8;
+    Tran  pi_rf : 8;
     float numeric;
     Rat(Arc*, Split, Tran, float);
     inline operator float () const;
@@ -231,7 +233,7 @@ inline Pin::At::operator float () const {
 
 // Function: pi
 inline auto Pin::At::pi() const {
-  return std::make_tuple(pi_arc, pi_el, pi_rf);
+  return std::make_tuple(pi_arc, static_cast<Split>(pi_el), static_cast<Tran>(pi_rf));
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -243,7 +245,7 @@ inline Pin::Slew::operator float () const {
 
 // Function: pi
 inline auto Pin::Slew::pi() const {
-  return std::make_tuple(pi_arc, pi_el, pi_rf);
+  return std::make_tuple(pi_arc, static_cast<Split>(pi_el), static_cast<Tran>(pi_rf));
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -255,7 +257,7 @@ inline Pin::Rat::operator float () const {
 
 // Function: pi
 inline auto Pin::Rat::pi() const {
-  return std::make_tuple(pi_arc, pi_el, pi_rf);
+  return std::make_tuple(pi_arc, static_cast<Split>(pi_el), static_cast<Tran>(pi_rf));
 }
 
 // ------------------------------------------------------------------------------------------------

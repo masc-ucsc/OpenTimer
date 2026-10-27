@@ -128,6 +128,48 @@ TEST_F(RcPropagation, WorkerBudgetChangesPreserveQueuedAndIncrementalWork) {
   }
 }
 
+TEST_F(RcPropagation, TimingProvenancePreservesCornersTransitionsAndPathPower) {
+  parasitics(1000);
+  for (const auto split : {ot::MIN, ot::MAX}) {
+    for (const auto tran : {ot::RISE, ot::FALL}) {
+      timer.set_at("a", split, tran, 100.f * split + 10.f * tran);
+      timer.set_slew("a", split, tran, 20.f + 5.f * tran);
+      // Multi-path reporting enumerates violating paths; constrain both
+      // corners.
+      timer.set_rat("y", split, tran, split == ot::MIN ? 1000000.f : 0.f);
+    }
+  }
+  timer.update_timing();
+  for (const auto split : {ot::MIN, ot::MAX}) {
+    SCOPED_TRACE(static_cast<int>(split));
+    for (const auto tran : {ot::RISE, ot::FALL}) {
+      ASSERT_TRUE(timer.report_at("y", split, tran));
+      ASSERT_TRUE(timer.report_rat("y", split, tran));
+      EXPECT_FLOAT_EQ(*timer.report_rat("y", split, tran),
+                      split == ot::MIN ? 1000000.f : 0.f);
+    }
+    const auto paths = timer.report_timing(2, split);
+    ASSERT_EQ(paths.size(), 2U);
+    std::array<bool, 2> seen{};
+    for (const auto &path : paths) {
+      ASSERT_EQ(path.size(), 2U);
+      const auto tran = path.front().transition;
+      seen[tran] = true;
+      EXPECT_EQ(path.front().pin.name(), "a");
+      EXPECT_EQ(path.back().pin.name(), "y");
+      EXPECT_EQ(path.back().transition, tran);
+      EXPECT_FLOAT_EQ(path.front().at, 100.f * split + 10.f * tran);
+      EXPECT_FLOAT_EQ(path.back().at, *timer.report_at("y", split, tran));
+      EXPECT_FLOAT_EQ(path.slack, split == ot::MIN ? path.back().at - 1000000.f
+                                                   : -path.back().at);
+      for (const auto &point : path)
+        EXPECT_FLOAT_EQ(point.ipower, 0.f);
+    }
+    EXPECT_TRUE(seen[ot::RISE]);
+    EXPECT_TRUE(seen[ot::FALL]);
+  }
+}
+
 TEST_F(RcPropagation, IdealClockBypassAndMaskedArcsCannotRetainOldDelays) {
   parasitics(1000);
   transition(20);

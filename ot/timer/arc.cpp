@@ -76,7 +76,6 @@ void Arc::_remap_timing(Split el, const Timing& timing) {
 void Arc::_reset_delay() {
   FOR_EACH_EL_RF_RF(el, frf, trf) {
     _delay[el][frf][trf].reset();
-    _ipower[el][frf][trf].reset();
   }
 }
 

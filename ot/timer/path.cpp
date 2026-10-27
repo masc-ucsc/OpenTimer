@@ -484,9 +484,9 @@ void Timer::_recover_datapath(Path& path, const SfxtCache& sfxt) const {
     std::tie(upin, urf) = _decode_pin(u);
     assert(path.back().transition == frf && urf == trf);
     auto at = path.back().at + *arc->_delay[sfxt._el][frf][trf];
-    // Timing-only Liberty and wire arcs need not carry an internal-power LUT.
-    auto ip = arc->_ipower[sfxt._el][frf][trf].value_or(0.0f);
-    path.emplace_back(*upin, urf, at, ip);
+    // Arc internal power is not computed. Preserve the reported zero without
+    // reserving an unused per-corner/transition power array on every arc.
+    path.emplace_back(*upin, urf, at, 0.0f);
   }
 }
 
@@ -514,8 +514,7 @@ void Timer::_recover_datapath(
   else {
     assert(!path.empty());
     auto at = path.back().at + *node->arc->_delay[sfxt._el][path.back().transition][urf];
-    auto ip = node->arc->_ipower[sfxt._el][path.back().transition][urf].value_or(0.0f);
-    path.emplace_back(*upin, urf, at, ip);
+    path.emplace_back(*upin, urf, at, 0.0f);
   }
 
   while(u != v) {
@@ -525,8 +524,7 @@ void Timer::_recover_datapath(
     std::tie(upin, urf) = _decode_pin(u);
     assert(path.back().transition == frf && urf == trf);
     auto at = path.back().at + *arc->_delay[sfxt._el][frf][trf]; 
-    auto ip = arc->_ipower[sfxt._el][frf][trf].value_or(0.0f);
-    path.emplace_back(*upin, urf, at, ip);
+    path.emplace_back(*upin, urf, at, 0.0f);
   }
 
 }

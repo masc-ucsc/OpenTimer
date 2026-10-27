@@ -342,6 +342,13 @@ created on the first action and can be resized between actions without losing
 queued builders or incremental timing state. `timer.num_threads()` reports the
 configured worker count, or the actual pool size once created.
 
+Pin timing provenance uses compact private corner/transition fields while
+keeping the public enum types and timing values unchanged. Arc objects do not
+reserve an internal-power array: that array was never populated, and path
+points continue to report zero internal power. Pin power reporting is unchanged.
+On the supported 64-bit build this reduces `sizeof(Arc)` from 264 to 200 bytes
+and `sizeof(Pin)` from 656 to 560 bytes.
+
 The example below shows an OpenTimer application and the use of builder, action, and accessor API.
 
 ```cpp
