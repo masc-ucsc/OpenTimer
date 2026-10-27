@@ -935,7 +935,12 @@ void Timer::_fprop_rc_timing(Pin& pin) {
 
 // Procedure: _fprop_slew
 void Timer::_fprop_slew(Pin& pin) {
-  
+  // Clear both parts before the paired slew/delay propagation. Net arcs save
+  // their waveform delay while propagating slew, avoiding a second solve.
+  for(auto arc : pin._fanin) {
+    arc->_reset_delay();
+  }
+
   // clear slew  
   pin._reset_slew();
   if(pin._ideal_clock) {
@@ -1009,14 +1014,11 @@ void Timer::_fprop_slew(Pin& pin) {
 // Procedure: _fprop_delay
 void Timer::_fprop_delay(Pin& pin) {
 
-  // clear delay
-  for(auto arc : pin._fanin) {
-    arc->_reset_delay();
-  }
-
   // Compute the delay from its fanin.
   for(auto arc : pin._fanin) {
-    arc->_fprop_delay();
+    // Ideal-clock pins bypass fanin slew propagation, so their arc delays
+    // still need evaluation before the existing ideal-edge masking below.
+    arc->_fprop_delay(!pin._ideal_clock);
     if(pin._ideal_clock) {
       // A clock gate's enable is data, not a second clock source. Its setup/
       // hold tests remain timed, but its data arc must not move the ideal edge.

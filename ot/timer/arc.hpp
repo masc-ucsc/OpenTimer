@@ -72,7 +72,7 @@ class Arc {
     void _fprop_slew();
     void _fprop_at();
     void _reset_delay();
-    void _fprop_delay();
+    void _fprop_delay(bool net_delay_ready);
     void _bprop_rat();
     void _insert_state(int);
     void _remove_state(int = 0);

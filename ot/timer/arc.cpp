@@ -91,8 +91,13 @@ void Arc::_fprop_slew() {
     // Case 1: Net arc
     [this] (Net* net) {
       FOR_EACH_EL_RF(el, rf) {
-        if(_from._slew[el][rf]) {
-          if(auto response = net->_response(el, rf, *(_from._slew[el][rf]), _to)) {
+        // Delay and slew come from the same waveform at this propagation
+        // boundary. Preserve the zero-slew delay fallback when no source
+        // transition is available, without inventing a propagated slew.
+        const float slew = _from._slew[el][rf] ? float(*_from._slew[el][rf]) : 0.0f;
+        if(auto response = net->_response(el, rf, slew, _to)) {
+          _delay[el][rf][rf] = response->delay;
+          if(_from._slew[el][rf]) {
             _to._relax_slew(this, el, rf, el, rf, response->slew);
           }
         }
@@ -123,7 +128,7 @@ void Arc::_fprop_slew() {
 }
 
 // Procedure: _fprop_delay
-void Arc::_fprop_delay() {
+void Arc::_fprop_delay(bool net_delay_ready) {
   
   if(_has_state(LOOP_BREAKER) || _case_mask == 0) {
     return;
@@ -131,7 +136,8 @@ void Arc::_fprop_delay() {
 
   std::visit(Functors{
     // Case 1: Net arc
-    [this] (Net* net) {
+    [this, net_delay_ready] (Net* net) {
+      if(net_delay_ready) return;
       FOR_EACH_EL_RF(el, rf) {
         _delay[el][rf][rf].reset();
         const float slew = _from._slew[el][rf] ? float(*_from._slew[el][rf]) : 0.0f;

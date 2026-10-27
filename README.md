@@ -566,6 +566,15 @@ cache is shared across pins or threads. The scalar crossing API and solver
 arithmetic remain unchanged. This reduces repeated transcendental work without
 changing the circuit model.
 
+Each normal wire arc evaluates its response once per forward-propagation task:
+slew propagation also stores the response's delay for the immediately following
+delay pass. Arc delays are cleared before the pair runs. Ideal clocks bypass
+fanin slew propagation and retain their separate delay evaluation and masking;
+a missing source transition still supplies the existing zero-slew delay fallback
+without creating a sink slew. This reuse adds no persistent cache or per-arc
+storage. RC/model changes and ideal-clock/mask transitions are covered by
+`unittest/rc_propagation.cpp`.
+
 Analytic waveform, Pi-circuit integration, shielding, failure fallback and
 incremental replacement checks are in `unittest/rc_waveform.cpp` and
 `unittest/rc_ceff.cpp`.
