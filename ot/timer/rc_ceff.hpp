@@ -194,6 +194,35 @@ inline std::optional<double> rc_fit_ramp(double tau, double target, double low,
     return 0;
   double lo = 0, hi = 2 * target / (logic - low) + 2 * tau;
   double t = target / (logic - low);
+  // When both thresholds cross during the ramp, eliminate its duration from
+  // v*T/tau = x + exp(-x) - 1. With d=target/tau and x the lower crossing,
+  // the remaining equation is x + q*exp(-x) = m. Its upper root supplies a
+  // seed without repeatedly solving two crossings inside the duration fit.
+  // The ordinary residual check below still validates the seed; mixed/tail
+  // crossings and ill-conditioned cases keep the original bounded solve.
+  // Far into the ramp, exp(-x) is already below the fitting tolerance and
+  // the original linear-ramp seed needs no refinement.
+  if (tau > 0 && low > 0 && logic < 1 && low * (t / tau) < 20) {
+    const double d = target / tau, ratio = low / (logic - low);
+    const double q = 1 + ratio * -std::expm1(-d);
+    const double m = 1 + ratio * d;
+    double x = m;
+    for (int k = 0; k < 24; ++k) {
+      const double exponential = q * std::exp(-x);
+      const double residual = x - m + exponential;
+      if (std::abs(residual) <= 1e-12 * std::max(1., m)) {
+        const double duration = (x + std::expm1(-x)) * tau / low;
+        if (std::isfinite(duration) && duration > lo && duration < hi &&
+            (x + d) * tau <= duration)
+          t = duration;
+        break;
+      }
+      const double next = x - residual / (1 - exponential);
+      if (!(next > 0 && std::isfinite(next)))
+        break;
+      x = next;
+    }
+  }
   const auto derivative = [tau](double duration, double v, double crossing) {
     if (tau <= 0)
       return v;

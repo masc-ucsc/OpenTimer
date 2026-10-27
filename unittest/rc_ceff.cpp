@@ -113,6 +113,31 @@ TEST(RcCeff, RampCrossingsRemainAccurateAcrossScales) {
       }
 }
 
+TEST(RcCeff, RampFitRecoversIntervalsAcrossRampAndTailBoundaries) {
+  for (double tau : {1e-6, 1., 1e6})
+    for (double ratio : {0., .01, .2, .5, 1., 1.5, 2., 5., 20., 1000.})
+      for (const auto [low, logic] :
+           {std::pair{.1, .4}, {.2, .5}, {.49, .5}, {.001, .999}}) {
+        ot::RcDriver source;
+        source.slow = tau;
+        source.duration = ratio * tau;
+        // Independent voltage bisection, not the crossing routine used by
+        // the fitter. Include both thresholds during the ramp, one in its
+        // tail, both in its tail, and the zero-duration feasibility limit.
+        const double target = reference_crossing(source, logic, 0) -
+                              reference_crossing(source, low, 0);
+        const auto fit = ot::rc_fit_ramp(tau, target, low, logic);
+        ASSERT_TRUE(fit) << tau << ' ' << ratio << ' ' << low << ' ' << logic;
+        source.duration = *fit;
+        const double achieved = reference_crossing(source, logic, 0) -
+                                reference_crossing(source, low, 0);
+        EXPECT_NEAR(achieved, target, 2e-7 * target)
+            << tau << ' ' << ratio << ' ' << low << ' ' << logic;
+      }
+  EXPECT_FALSE(ot::rc_fit_ramp(1, .1, .2, .5));
+  EXPECT_EQ(ot::rc_fit_ramp(0, 3, .2, .5), 10);
+}
+
 TEST(RcCeff, ResistanceShieldsRemoteCapacitance) {
   ot::SlewThresholds thresholds;
   thresholds.lower = {.1f, .1f};

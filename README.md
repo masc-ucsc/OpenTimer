@@ -566,6 +566,14 @@ cache is shared across pins or threads. The scalar crossing API and solver
 arithmetic remain unchanged. This reduces repeated transcendental work without
 changing the circuit model.
 
+Ramp fitting uses a reduced scalar equation to seed the duration when both
+characterized thresholds cross before the ramp ends. This removes repeated
+nested crossing solves for the initial estimate. The original bounded solver
+still validates the waveform interval at its existing tolerance; mixed/tail
+crossings retain its original seed. Long ramps already have an accurate linear
+estimate and skip the extra solve. Independent voltage-bisection regressions
+cover the ramp/tail boundary, feasibility limit and consistent time scales.
+
 Each normal wire arc evaluates its response once per forward-propagation task:
 slew propagation also stores the response's delay for the immediately following
 delay pass. Arc delays are cleared before the pair runs. Ideal clocks bypass
