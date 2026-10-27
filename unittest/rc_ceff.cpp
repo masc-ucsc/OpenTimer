@@ -154,6 +154,35 @@ TEST(RcCeff, DriverWaveformMatchesNumericalPiCircuit) {
     }
   }
 }
+TEST(RcCeff, ChargeFitIsAccurateWithoutRepeatedLibrarySearches) {
+  ot::SlewThresholds thresholds;
+  for (double resistance : {.01, .1, 1., 10., 100.}) {
+    const ot::RcPi pi{3, 7, resistance};
+    int queries = 0;
+    const auto fit =
+        ot::rc_effective_gate(pi, thresholds, ot::RISE, [&](double cap) {
+          ++queries;
+          return table(cap);
+        });
+    ASSERT_TRUE(fit) << resistance;
+    EXPECT_LE(queries, 12) << resistance;
+    const auto &d = fit->driver;
+    const double measured = table(fit->capacitance)->second * thresholds.derate;
+    const double window =
+        std::min(measured / thresholds.span(ot::RISE), 1.4 * d.duration);
+    const double far_weight = d.slow / (d.slow - d.fast);
+    const double far =
+        far_weight * ot::rc_ramp_voltage(window, d.slow, d.duration) +
+        (1 - far_weight) * ot::rc_ramp_voltage(window, d.fast, d.duration);
+    const double charge = pi.near_cap * d.voltage(window) + pi.far_cap * far;
+    const double rd = -std::log(thresholds.output[ot::RISE]) * .5;
+    const double reference =
+        fit->capacitance *
+        ot::rc_ramp_voltage(window, rd * fit->capacitance, d.duration);
+    EXPECT_NEAR((charge - reference) / (pi.near_cap + pi.far_cap), 0, 1e-6)
+        << resistance;
+  }
+}
 TEST(RcCeff, UncharacterizedOrInvalidFitFallsBack) {
   ot::SlewThresholds t;
   EXPECT_FALSE(ot::rc_effective_gate(
@@ -164,6 +193,32 @@ TEST(RcCeff, UncharacterizedOrInvalidFitFallsBack) {
       [](double) -> std::optional<std::pair<double, double>> {
         return std::pair{1., 0.};
       }));
+}
+
+TEST(RcCeff, UnavailableEndpointFitKeepsTheValidInteriorSolution) {
+  ot::SlewThresholds thresholds;
+  for (bool unavailable_low : {true, false}) {
+    const ot::RcPi pi{3, 7, unavailable_low ? 1. : 10.};
+    const auto reference =
+        ot::rc_effective_gate(pi, thresholds, ot::RISE, table);
+    const auto result = ot::rc_effective_gate(
+        pi, thresholds, ot::RISE,
+        [&](double cap) -> std::optional<std::pair<double, double>> {
+          if (unavailable_low && cap < 5)
+            return {};
+          auto values = table(cap);
+          // This positive slew is too short for a physical ramp at the upper
+          // bound, while the interior around the solution stays characterized.
+          if (!unavailable_low && cap >= 9)
+            values->second = 1e-4;
+          return values;
+        });
+    ASSERT_TRUE(reference);
+    ASSERT_TRUE(result);
+    EXPECT_NEAR(result->capacitance, reference->capacitance, 1e-4);
+    EXPECT_NEAR(result->delay, reference->delay, 1e-4);
+    EXPECT_NEAR(result->slew, reference->slew, 1e-4);
+  }
 }
 
 TEST(RcCeff, FitIsInvariantUnderConsistentTimeAndCapacitanceUnits) {

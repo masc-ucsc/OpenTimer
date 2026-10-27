@@ -291,21 +291,51 @@ std::optional<RcGateResult> rc_effective_gate(const RcPi &pi,
     return Fit{(charge - reference) / total, cap, values->first, d};
   };
   double lo = std::max(pi.near_cap, total * 1e-6), hi = total;
-  std::optional<Fit> best;
-  for (int k = 0; k < 18; ++k) {
-    const double c = (lo + hi) * .5;
+  constexpr double fit_tolerance = 1e-7;
+  std::optional<double> low_error, high_error;
+  // Short wires put the solution close to full capacitance, while strongly
+  // shielded loads approach the near capacitance. Sample those bounds first
+  // instead of spending most trials discovering the opposite residual sign.
+  std::optional<Fit> best = fit(hi);
+  if (best)
+    high_error = best->error;
+  if (!best || std::abs(best->error) >= fit_tolerance) {
+    const auto low_fit = fit(lo);
+    if (low_fit) {
+      low_error = low_fit->error;
+      if (!best || std::abs(low_fit->error) < std::abs(best->error))
+        best = low_fit;
+    }
+  }
+  // Each trial fits another waveform. Interpolate inside a valid bracket;
+  // every other step still bisects to bound work in non-smooth LUT regions.
+  // The saved trials allow a tighter charge residual than the old 1e-5 fit.
+  // 48 steps guarantee 24 bisections, enough for the 1e-7 interval bound.
+  for (int k = 0; k < 48 && (!best || std::abs(best->error) >= fit_tolerance);
+       ++k) {
+    double c = (lo + hi) * .5;
+    if (k % 2 == 0 && low_error && high_error) {
+      const double interpolated =
+          lo + (hi - lo) * *low_error / (*low_error - *high_error);
+      if (interpolated > lo && interpolated < hi)
+        c = interpolated;
+    }
     auto f = fit(c);
     if (!f) {
       hi = c;
+      high_error.reset();
       continue;
     }
     best = f;
-    if (std::abs(f->error) < 1e-5 || hi - lo < total * 1e-5)
+    if (std::abs(f->error) < fit_tolerance || hi - lo < total * fit_tolerance)
       break;
-    if (f->error > 0)
+    if (f->error > 0) {
       lo = c;
-    else
+      low_error = f->error;
+    } else {
       hi = c;
+      high_error = f->error;
+    }
   }
   if (!best || std::abs(best->error) > 1e-3)
     return {};
