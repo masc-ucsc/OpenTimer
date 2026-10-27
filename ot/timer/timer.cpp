@@ -1,5 +1,6 @@
 #include <ot/timer/timer.hpp>
 #include <map>
+#include <stdexcept>
 #include <tuple>
 
 namespace ot {
@@ -1209,9 +1210,6 @@ void Timer::_build_prop_cands() {
 
 // Procedure: _build_prop_tasks
 void Timer::_build_prop_tasks() {
-  
-  // explore propagation candidates
-  _build_prop_cands();
 
   // Emplace the fprop task
   // (1) propagate the rc timing
@@ -1326,15 +1324,59 @@ void Timer::_update_timing() {
     _insert_full_timing_frontiers();
   }
 
-  // build propagation tasks
-  _build_prop_tasks();
+  _build_prop_cands();
 
-  // debug the graph
-  //_taskflow.dump(std::cout);
-
-  // Execute the task
-  _run_taskflow();
-  _taskflow.clear();
+  // Acyclic candidate lists already have topological order. SCC loop breaking
+  // can change that order, including retained SCCs outside the forward cone.
+  // Reorder those cones against the same LOOP_BREAKER arcs used by Taskflow.
+  // One worker needs only an order, not two tasks and dependencies per pin.
+  if(_num_threads == 1) {
+    const bool loops = _scc_analysis ||
+      std::any_of(_bprop_cands.begin(), _bprop_cands.end(), [] (const Pin* pin) {
+        return pin->_scc != nullptr;
+      });
+    if(loops) {
+      const auto reorder = [] (auto& candidates, bool forward) {
+        std::vector<Pin*> ordered;
+        ordered.reserve(candidates.size());
+        const int candidate = forward ? Pin::FPROP_CAND : Pin::BPROP_CAND;
+        const int active = forward ? Pin::IN_FPROP_STACK : Pin::IN_BPROP_STACK;
+        const auto visit = [&] (auto&& self, Pin& pin) -> void {
+          if(pin._has_state(active)) {
+            throw std::runtime_error("cycle remains after timing loop breaking");
+          }
+          if(pin._has_state(Pin::SERIAL_VISITED)) return;
+          pin._insert_state(Pin::SERIAL_VISITED | active);
+          for(auto arc : forward ? pin._fanin : pin._fanout) {
+            if(arc->_has_state(Arc::LOOP_BREAKER)) continue;
+            auto& dependency = forward ? arc->_from : arc->_to;
+            if(dependency._has_state(candidate)) self(self, dependency);
+          }
+          pin._remove_state(active);
+          ordered.push_back(&pin);
+        };
+        for(auto pin : candidates) visit(visit, *pin);
+        assert(ordered.size() == candidates.size());
+        std::copy(ordered.begin(), ordered.end(), candidates.begin());
+        for(auto pin : candidates) pin->_remove_state(Pin::SERIAL_VISITED);
+      };
+      reorder(_fprop_cands, true);
+      reorder(_bprop_cands, false);
+    }
+    for(auto pin : _fprop_cands) {
+      _fprop_rc_timing(*pin);
+      _fprop_slew(*pin);
+      _fprop_delay(*pin);
+      _fprop_at(*pin);
+      _fprop_test(*pin);
+    }
+    for(auto pin : _bprop_cands) _bprop_rat(*pin);
+  }
+  else {
+    _build_prop_tasks();
+    _run_taskflow();
+    _taskflow.clear();
+  }
   
   // Clear the propagation tasks.
   _clear_prop_tasks();

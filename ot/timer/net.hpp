@@ -44,8 +44,8 @@ class RctNode {
     TimingData<float, MAX_TRAN, MAX_SPLIT> _ldelay ;
     TimingData<float, MAX_TRAN, MAX_SPLIT> _impulse;
 
-    std::list<RctEdge*> _fanin;
-    std::list<RctEdge*> _fanout;
+    // Edge indices remain stable when the owning vector grows.
+    std::vector<size_t> _fanout;
 
     Pin* _pin {nullptr};
 
@@ -118,7 +118,7 @@ class Rct {
     TimingData<RcPi, MAX_SPLIT, MAX_TRAN> _pi;
 
     std::unordered_map<std::string, RctNode> _nodes;
-    std::list<RctEdge> _edges;
+    std::vector<RctEdge> _edges;
 
     void _update_load(RctNode*, RctNode*);
     void _update_delay(RctNode*, RctNode*);

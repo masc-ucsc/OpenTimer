@@ -129,6 +129,7 @@ class Pin {
   constexpr static int IN_BPROP_STACK   = 0x08;
   constexpr static int UNLOOP_CAND      = 0x10;
   constexpr static int IN_UNLOOP_STACK  = 0x20;
+  constexpr static int SERIAL_VISITED   = 0x40;
 
   public:
     

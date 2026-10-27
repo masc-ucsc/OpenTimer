@@ -342,6 +342,12 @@ created on the first action and can be resized between actions without losing
 queued builders or incremental timing state. `timer.num_threads()` reports the
 configured worker count, or the actual pool size once created.
 
+With one worker, timing propagation executes directly in topological candidate
+order, avoiding per-pin task and dependency allocations. Cones containing new
+or retained strongly connected components are reordered after the existing
+loop breakers are applied. Multiple workers keep the task-graph schedule.
+Builder execution and incremental candidate discovery are unchanged.
+
 `timer.update_parasitics(spef)` applies an in-memory RC batch synchronously.
 It first materializes pending builders, replaces the affected RC trees and
 releases the SPEF payload. It retains all timing frontiers without propagating
@@ -357,7 +363,10 @@ On the supported 64-bit build this reduces `sizeof(Arc)` from 264 to 200 bytes
 and `sizeof(Pin)` from 656 to 560 bytes.
 
 RC-tree nodes use their owning map's labels instead of keeping another string
-per node. Tree/SPEF exporters resolve those labels while writing the report;
+per node. Adjacency stores indices into a contiguous edge vector, preserving
+insertion order across vector growth. Nodes retain only outgoing edges; the
+unused incoming lists and their per-edge allocations are omitted. Tree/SPEF
+exporters resolve those labels while writing the report;
 timing propagation does not allocate a second name table.
 
 The example below shows an OpenTimer application and the use of builder, action, and accessor API.

@@ -82,10 +82,9 @@ void Rct::insert_edge(const std::string& from, const std::string& to, float res)
   
   auto& tail = _nodes[from];
   auto& head = _nodes[to];
-  auto& edge = _edges.emplace_back(tail, head, res);
-
-  tail._fanout.push_back(&edge);
-  head._fanin.push_back(&edge);
+  const auto index = _edges.size();
+  _edges.emplace_back(tail, head, res);
+  tail._fanout.push_back(index);
 }
  
 // Function: insert_segment
@@ -142,8 +141,9 @@ void Rct::update_rc_timing() {
 // Compute the load capacitance of each rctree node along the downstream traversal of the rctree.
 void Rct::_update_load(RctNode* parent, RctNode* from) {
   // Add downstream capacitances.
-  for(auto e : from->_fanout) {
-    if(auto& to = e->_to; &to != parent) {
+  for(auto index : from->_fanout) {
+    const auto& edge = _edges[index];
+    if(auto& to = edge._to; &to != parent) {
       _update_load(from, &to);
       FOR_EACH_EL_RF(el, rf) {
         from->_load[el][rf] += to._load[el][rf];
@@ -159,13 +159,14 @@ void Rct::_update_load(RctNode* parent, RctNode* from) {
 // Compute the delay of each rctree node using the Elmore delay model.
 void Rct::_update_delay(RctNode* parent, RctNode* from) {
   
-  for(auto e : from->_fanout) {
-    if(auto& to = e->_to; &to != parent) {
+  for(auto index : from->_fanout) {
+    const auto& edge = _edges[index];
+    if(auto& to = edge._to; &to != parent) {
       FOR_EACH_EL_RF(el, rf) {
         // Update the delay.
-        to._delay[el][rf] = from->_delay[el][rf] + e->_res * to._load[el][rf];
+        to._delay[el][rf] = from->_delay[el][rf] + edge._res * to._load[el][rf];
         // Update the upstream resistance.
-        to._ures[el][rf] = from->_ures[el][rf] + e->_res;
+        to._ures[el][rf] = from->_ures[el][rf] + edge._res;
       }
       _update_delay(from, &to);
     }
@@ -176,8 +177,9 @@ void Rct::_update_delay(RctNode* parent, RctNode* from) {
 // Compute the load delay of each rctree node along the downstream traversal of the rctree.
 void Rct::_update_ldelay(RctNode* parent, RctNode* from) {
 
-  for(auto e : from->_fanout) {
-    if(auto& to = e->_to; &to != parent) {
+  for(auto index : from->_fanout) {
+    const auto& edge = _edges[index];
+    if(auto& to = edge._to; &to != parent) {
       _update_ldelay(from, &to);
       FOR_EACH_EL_RF(el, rf) {
         from->_ldelay[el][rf] += to._ldelay[el][rf];
@@ -194,10 +196,11 @@ void Rct::_update_ldelay(RctNode* parent, RctNode* from) {
 // Compute the impulse and second moment of the input response for each rctree node. 
 void Rct::_update_response(RctNode* parent, RctNode* from) {
 
-  for(auto e : from->_fanout) {
-    if(auto& to = e->_to; &to != parent) {
+  for(auto index : from->_fanout) {
+    const auto& edge = _edges[index];
+    if(auto& to = edge._to; &to != parent) {
       FOR_EACH_EL_RF(el, rf) {
-        to._beta[el][rf] = from->_beta[el][rf] + e->_res * to._ldelay[el][rf];
+        to._beta[el][rf] = from->_beta[el][rf] + edge._res * to._ldelay[el][rf];
       }
       _update_response(from, &to);
     }
@@ -270,6 +273,7 @@ void Net::_make_rct() {
 
   // Step 1: create a new rctree object
   auto& rct = _rct.emplace<Rct>();
+  rct._edges.reserve(2 * _spef_net->ress.size());
 
   // Step 2: insert the node and capacitance (*CAP section).
   for(const auto& [node1, node2, cap] : _spef_net->caps) {

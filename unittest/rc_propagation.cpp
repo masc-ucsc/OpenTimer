@@ -197,6 +197,54 @@ TEST_F(RcPropagation, RcLabelsSurviveRehashAndIncrementalReplacement) {
   }
 }
 
+TEST_F(RcPropagation, BranchedRcPreservesLoadDelayAndExportAcrossReplacement) {
+  timer.set_resistance_unit(ot::ohm_t(1000));
+  transition(20);
+  for (auto model : {ot::RcModel::elmore, ot::RcModel::effective_capacitance}) {
+    timer.set_rc_model(model);
+    for (int branches : {128, 17}) {
+      spef::Spef data;
+      data.capacitance_unit = "1 FF";
+      data.resistance_unit = "1 KOHM";
+      spef::Net net("a", 2 * branches);
+      net.caps.emplace_back("a", "", 0);
+      // The zero-capacitance trunk is created by the resistor section, after
+      // the leaf nodes. Fanout growth must preserve insertion/traversal order.
+      net.ress.emplace_back("a", "trunk", 3);
+      for (int i = 1; i <= branches; ++i) {
+        const auto leaf = i == branches ? "y" : "leaf_" + std::to_string(i);
+        net.caps.emplace_back(leaf, "", 2);
+        net.ress.emplace_back("trunk", leaf, i);
+      }
+      data.nets.push_back(std::move(net));
+      timer.update_parasitics(std::move(data));
+      check(20, model);
+      const auto *tree = timer.pins().at("a").net()->rct();
+      ASSERT_NE(tree, nullptr);
+      EXPECT_EQ(tree->num_nodes(), branches + 2);
+      EXPECT_EQ(tree->num_edges(), 2 * (branches + 1));
+      for (auto split : {ot::MIN, ot::MAX}) {
+        for (auto tran : {ot::RISE, ot::FALL}) {
+          EXPECT_FLOAT_EQ(tree->node("a")->load(split, tran), 2 * branches);
+          for (int i = 1; i <= branches; ++i) {
+            const auto leaf = i == branches ? "y" : "leaf_" + std::to_string(i);
+            EXPECT_FLOAT_EQ(tree->delay(leaf, split, tran),
+                            6 * branches + 2 * i);
+          }
+        }
+      }
+      std::ostringstream exported;
+      timer.dump_spef(exported);
+      EXPECT_NE(exported.str().find("a trunk 3\n"), std::string::npos);
+      EXPECT_NE(
+          exported.str().find("trunk y " + std::to_string(branches) + "\n"),
+          std::string::npos);
+      if (branches == 17)
+        EXPECT_EQ(exported.str().find("leaf_127"), std::string::npos);
+    }
+  }
+}
+
 TEST_F(RcPropagation, MissingSlewKeepsDelayButDoesNotInventASlew) {
   parasitics(1000);
   transition(20);

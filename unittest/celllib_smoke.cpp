@@ -224,6 +224,128 @@ TEST_F(CelllibSmoke, MixedThresholdChainMatchesIndependentOpenStaCalculation) {
   }
 }
 
+TEST_F(CelllibSmoke,
+       SerialAndParallelPropagationAgreeAcrossReconvergenceAndCycles) {
+  const std::string buffer = R"lib(
+    cell(BUF) {
+      pin(A) { direction : input; capacitance : 2; }
+      pin(Y) { direction : output; function : "A";
+        timing() { related_pin : "A"; timing_sense : positive_unate;
+          cell_rise(scalar) { values("10"); } cell_fall(scalar) { values("11"); }
+          rise_transition(scalar) { values("5"); } fall_transition(scalar) { values("6"); }
+        }
+      }
+    }
+  )lib";
+  write(R"lib(library(test) {
+    time_unit : "1ps"; capacitive_load_unit(1,ff);
+  )lib" +
+        buffer + R"lib(
+    cell(JOIN) {
+      pin(A) { direction : input; capacitance : 2; }
+      pin(B) { direction : input; capacitance : 2; }
+      pin(Y) { direction : output; function : "A | B";
+        timing() { related_pin : "A"; timing_sense : positive_unate;
+          cell_rise(scalar) { values("20"); } cell_fall(scalar) { values("21"); }
+          rise_transition(scalar) { values("5"); } fall_transition(scalar) { values("6"); }
+        }
+        timing() { related_pin : "B"; timing_sense : positive_unate;
+          cell_rise(scalar) { values("30"); } cell_fall(scalar) { values("31"); }
+          rise_transition(scalar) { values("5"); } fall_transition(scalar) { values("6"); }
+        }
+      }
+    }
+  })lib");
+  ot::Timer serial, parallel;
+  serial.set_num_threads(1);
+  parallel.set_num_threads(2);
+  for (auto *timer : {&serial, &parallel}) {
+    timer->read_celllib(path).insert_primary_input("a").insert_primary_output(
+        "y");
+    timer->insert_gate("b", "BUF").insert_gate("c", "BUF");
+    timer->insert_gate("join", "JOIN").insert_gate("tail", "BUF");
+    for (const auto *net : {"in", "b_out", "c_out", "joined", "out"})
+      timer->insert_net(net);
+    timer->disconnect_pin("a").disconnect_pin("y");
+    for (const auto &[pin, net] :
+         std::vector<std::pair<std::string, std::string>>{{"a", "in"},
+                                                          {"b:A", "in"},
+                                                          {"c:A", "in"},
+                                                          {"b:Y", "b_out"},
+                                                          {"join:A", "b_out"},
+                                                          {"c:Y", "c_out"},
+                                                          {"join:B", "c_out"},
+                                                          {"join:Y", "joined"},
+                                                          {"tail:A", "joined"},
+                                                          {"tail:Y", "out"},
+                                                          {"y", "out"}}) {
+      timer->connect_pin(pin, net);
+    }
+    for (auto split : {ot::MIN, ot::MAX}) {
+      for (auto tran : {ot::RISE, ot::FALL}) {
+        timer->set_at("a", split, tran, 3.f + 2.f * tran);
+        timer->set_slew("a", split, tran, 10.f);
+        timer->set_rat("y", split, tran, split == ot::MIN ? 1000.f : 0.f);
+      }
+    }
+  }
+  const auto compare = [&] {
+    serial.update_timing();
+    parallel.update_timing();
+    ASSERT_EQ(serial.num_sccs(), parallel.num_sccs());
+    ASSERT_EQ(serial.pins().size(), parallel.pins().size());
+    for (const auto &[name, pin] : serial.pins()) {
+      const auto &other = parallel.pins().at(name);
+      for (auto split : {ot::MIN, ot::MAX}) {
+        for (auto tran : {ot::RISE, ot::FALL}) {
+          EXPECT_EQ(pin.at(split, tran), other.at(split, tran)) << name;
+          EXPECT_EQ(pin.rat(split, tran), other.rat(split, tran)) << name;
+          EXPECT_EQ(pin.slew(split, tran), other.slew(split, tran)) << name;
+          EXPECT_EQ(pin.slack(split, tran), other.slack(split, tran)) << name;
+        }
+      }
+    }
+  };
+  compare();
+  EXPECT_EQ(serial.num_sccs(), 0U);
+  EXPECT_FLOAT_EQ(*serial.report_at("y", ot::MAX, ot::RISE), 53.f);
+  for (auto *timer : {&serial, &parallel})
+    timer->set_at("a", ot::MAX, ot::RISE, 13.f);
+  compare();
+  EXPECT_FLOAT_EQ(*serial.report_at("y", ot::MAX, ot::RISE), 63.f);
+  // Introduce a feedback loop with an external input and an acyclic tail.
+  for (auto *timer : {&serial, &parallel})
+    timer->disconnect_pin("c:A").connect_pin("c:A", "joined");
+  compare();
+  EXPECT_GT(serial.num_sccs(), 0U);
+  // Only the sink is a forward candidate; its backward cone still contains
+  // the previously discovered SCC and must respect its retained loop breakers.
+  for (auto *timer : {&serial, &parallel})
+    timer->set_rat("y", ot::MAX, ot::RISE, -20.f);
+  compare();
+  for (auto *timer : {&serial, &parallel})
+    timer->disconnect_pin("c:A").connect_pin("c:A", "in");
+  compare();
+  EXPECT_EQ(serial.num_sccs(), 0U);
+  // Two independent cycles feed the same acyclic output cone. Reordering must
+  // honor both sets of loop breakers, including a later RAT-only update.
+  for (auto *timer : {&serial, &parallel}) {
+    timer->disconnect_pin("b:A").connect_pin("b:A", "b_out");
+    timer->disconnect_pin("c:A").connect_pin("c:A", "c_out");
+  }
+  compare();
+  EXPECT_EQ(serial.num_sccs(), 2U);
+  for (auto *timer : {&serial, &parallel})
+    timer->set_rat("y", ot::MAX, ot::RISE, -30.f);
+  compare();
+  for (auto *timer : {&serial, &parallel}) {
+    timer->disconnect_pin("b:A").connect_pin("b:A", "in");
+    timer->disconnect_pin("c:A").connect_pin("c:A", "in");
+  }
+  compare();
+  EXPECT_EQ(serial.num_sccs(), 0U);
+}
+
 TEST_F(CelllibSmoke, InputDriverTracksLoadWithoutDoubleCountingIntrinsicDelay) {
   write(threshold_libraries());
   ot::Timer timer;
