@@ -334,6 +334,14 @@ The table below summarizes a list of commonly used methods.
 
 
 *All public methods are thread-safe* as a result of OpenTimer lineage.
+
+`timer.set_num_threads(n)` sets the Taskflow worker count; zero requests one
+worker. The calling thread waits for each timing action. Without an explicit
+budget, the timer uses hardware concurrency (at least one worker). The pool is
+created on the first action and can be resized between actions without losing
+queued builders or incremental timing state. `timer.num_threads()` reports the
+configured worker count, or the actual pool size once created.
+
 The example below shows an OpenTimer application and the use of builder, action, and accessor API.
 
 ```cpp

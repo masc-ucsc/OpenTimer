@@ -9,11 +9,25 @@ namespace ot {
 // Function: set_num_threads
 Timer& Timer::set_num_threads(unsigned n) {
   std::scoped_lock lock(_mutex);
-  unsigned w = (n == 0) ? 0 : n-1;
-  OT_LOGI("using ", n, " threads (", w, " worker)");
-  // TODO
-  //_taskflow.num_workers(w);
+  n = std::max(1u, n);
+  if(n != _num_threads) {
+    // Actions wait for their taskflow while holding this same mutex. The old
+    // executor is idle here; pending builders belong to _taskflow, not it.
+    _executor.reset();
+    _num_threads = n;
+  }
+  OT_LOGI("using ", n, " timing worker(s)");
   return *this;
+}
+
+unsigned Timer::num_threads() const {
+  std::shared_lock lock(_mutex);
+  return _executor ? _executor->num_workers() : _num_threads;
+}
+
+void Timer::_run_taskflow() {
+  if(!_executor) _executor = std::make_unique<tf::Executor>(_num_threads);
+  _executor->run(_taskflow).wait();
 }
 
 // Procedure: _add_to_lineage
@@ -1279,7 +1293,7 @@ void Timer::update_netlist() {
 void Timer::_update_netlist() {
   if (!_lineage)
     return;
-  _executor.run(_taskflow).wait();
+  _run_taskflow();
   _taskflow.clear();
   _lineage.reset();
   _remove_state(EPTS_UPDATED | AREA_UPDATED | POWER_UPDATED);
@@ -1319,7 +1333,7 @@ void Timer::_update_timing() {
   //_taskflow.dump(std::cout);
 
   // Execute the task
-  _executor.run(_taskflow).wait();
+  _run_taskflow();
   _taskflow.clear();
   
   // Clear the propagation tasks.
@@ -1443,7 +1457,7 @@ void Timer::_update_endpoints() {
   }
 
   // run tasks
-  _executor.run(_taskflow).wait();
+  _run_taskflow();
   _taskflow.clear();
 
   _insert_state(EPTS_UPDATED);

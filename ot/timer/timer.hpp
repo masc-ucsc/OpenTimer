@@ -34,7 +34,10 @@ class Timer {
   public:
     
     // Builder
+    // Number of Taskflow workers. Zero requests the minimum of one worker;
+    // an unset budget retains hardware concurrency. Changes preserve builders.
     Timer& set_num_threads(unsigned);
+    unsigned num_threads() const;
     // Cheap total-load/Elmore estimates for optimization ranking. Switching
     // back restores the detailed waveform model and invalidates prior timing.
     Timer &set_rc_model(RcModel);
@@ -170,7 +173,10 @@ class Timer {
     mutable std::shared_mutex _mutex;
 
     tf::Taskflow _taskflow;
-    tf::Executor _executor;
+    // Construct lazily so an explicit budget does not first start a full pool.
+    std::unique_ptr<tf::Executor> _executor;
+    unsigned _num_threads {std::max(1u, std::thread::hardware_concurrency())};
+    void _run_taskflow();
 
     int _state {0};
     

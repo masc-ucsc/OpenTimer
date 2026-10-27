@@ -104,6 +104,30 @@ TEST_F(RcPropagation, MissingSlewKeepsDelayButDoesNotInventASlew) {
   check(5, ot::RcModel::effective_capacitance);
 }
 
+TEST_F(RcPropagation, WorkerBudgetChangesPreserveQueuedAndIncrementalWork) {
+  EXPECT_EQ(timer.num_threads(), 1U);
+  float resistance = 100;
+  for (unsigned workers : {1U, 3U, 1U, 2U, 0U}) {
+    // Resize the pool after queuing builders, and again after prior updates.
+    // Neither the queued RC edit nor the live timing graph may be discarded.
+    parasitics(resistance);
+    transition(20);
+    timer.set_rat("y", ot::MAX, ot::RISE, 0);
+    timer.set_rat("y", ot::MAX, ot::FALL, 0);
+    timer.set_num_threads(workers);
+    check(20, ot::RcModel::effective_capacitance);
+    // After execution this reads the actual executor's worker count.
+    EXPECT_EQ(timer.num_threads(), std::max(1U, workers));
+    // Exercise the endpoint and multi-path taskflows after each pool change.
+    const auto paths = timer.report_timing(2, ot::MAX);
+    ASSERT_EQ(paths.size(), 2U);
+    for (const auto &path : paths) {
+      EXPECT_FLOAT_EQ(path.slack, -*timer.pins().at("y").at(ot::MAX, ot::RISE));
+    }
+    resistance *= 2;
+  }
+}
+
 TEST_F(RcPropagation, IdealClockBypassAndMaskedArcsCannotRetainOldDelays) {
   parasitics(1000);
   transition(20);
