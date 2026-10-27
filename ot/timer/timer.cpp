@@ -471,7 +471,27 @@ Timer& Timer::insert_net(std::string name) {
 
 // Function: _insert_net
 Net& Timer::_insert_net(const std::string& name) {
-  return _nets.try_emplace(name, name).first->second;
+  auto &net = _nets.try_emplace(name, name).first->second;
+  net._rc_model = _rc_model;
+  return net;
+}
+
+Timer &Timer::set_rc_model(RcModel model) {
+  std::scoped_lock lock(_mutex);
+  auto op = _taskflow.emplace([this, model]() {
+    if (_rc_model == model)
+      return;
+    _rc_model = model;
+    for (auto &[name, net] : _nets) {
+      net._rc_model = model;
+      net._driver = {};
+      net._effective_cap = {};
+      net._elmore_fallback = {};
+    }
+    _enable_full_timing_update();
+  });
+  _add_to_lineage(op);
+  return *this;
 }
 
 // Procedure: remove_net
@@ -1249,6 +1269,22 @@ void Timer::_clear_prop_tasks() {
   _bprop_cands.clear();
 }
 
+void Timer::update_netlist() {
+  std::scoped_lock lock(_mutex);
+  _update_netlist();
+}
+
+void Timer::_update_netlist() {
+  if (!_lineage)
+    return;
+  _executor.run(_taskflow).wait();
+  _taskflow.clear();
+  _lineage.reset();
+  _remove_state(EPTS_UPDATED | AREA_UPDATED | POWER_UPDATED);
+  // Keep frontiers and FULL_TIMING: materializing builders does not evaluate
+  // any affected pin, even when no more builders are queued before a query.
+}
+
 // Function: update_timing
 // Perform comprehensive timing update: 
 // (1) grpah-based timing (GBA)
@@ -1262,16 +1298,13 @@ void Timer::update_timing() {
 void Timer::_update_timing() {
   
   // Timing is update-to-date
-  if(!_lineage) {
-    assert(_frontiers.size() == 0);
+  if (!_lineage && _frontiers.empty() && !_has_state(FULL_TIMING)) {
     return;
   }
 
   // materialize the lineage
-  _executor.run(_taskflow).wait();
-  _taskflow.clear();
-  _lineage.reset();
-  
+  _update_netlist();
+
   // Check if full update is required
   if(_has_state(FULL_TIMING)) {
     _insert_full_timing_frontiers();

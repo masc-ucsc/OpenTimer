@@ -42,9 +42,20 @@ public:
       return duration + tau * (tail_log() - std::log1p(-voltage));
     }
     const double target = voltage * r;
-    double low = 0, high = r, x = std::min(r, target + 1);
+    // Invert x + exp(-x) - 1 = target near zero. Starting at target+1
+    // spends several Newton steps contracting toward sqrt(2*target) during
+    // each effective-capacitance fit. This series supplies only the initial
+    // guess; the same bracket and residual tolerance still govern the solve.
+    double seed = target + 1;
+    if (target < 1) {
+      const double root = std::sqrt(2 * target);
+      seed = root * (1 + root * (1. / 6 + root * (1. / 36 + root / 270)));
+    }
+    double low = 0, high = r, x = std::min(r, seed);
     for (int step = 0; step < 24; ++step) {
-      const double expm1 = std::expm1(-x);
+      // expm1 protects cancellation near zero. Away from zero, exp-1 has
+      // ample precision for this residual and avoids the costlier kernel.
+      const double expm1 = x >= .5 ? std::exp(-x) - 1 : std::expm1(-x);
       const double error = x + expm1 - target;
       if (std::abs(error) <= 1e-10 * std::max(1., target))
         break;

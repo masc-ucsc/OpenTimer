@@ -129,12 +129,123 @@ TEST(RcWaveform, TimerPropagatesSinglePoleThresholdsAndIncrementalRc) {
   }
 }
 
+TEST(RcWaveform, MaterializedEditsRetainDirtyTimingUntilTheFinalQuery) {
+  ot::Timer deferred, reference;
+  const auto build = [](ot::Timer &timer) {
+    timer.set_time_unit(ot::second_t(1e-12));
+    timer.set_capacitance_unit(ot::farad_t(1e-15));
+    timer.set_resistance_unit(ot::ohm_t(1e3));
+    timer.insert_primary_input("a").insert_primary_output("y").insert_net(
+        "wire");
+    timer.disconnect_pin("a")
+        .disconnect_pin("y")
+        .connect_pin("a", "wire")
+        .connect_pin("y", "wire");
+    for (auto split : {ot::MIN, ot::MAX}) {
+      for (auto edge : {ot::RISE, ot::FALL}) {
+        timer.set_at("a", split, edge, 0).set_slew("a", split, edge, 0);
+        timer.set_rat("y", split, edge, 1000);
+      }
+    }
+  };
+  const auto rc = [](ot::Timer &timer, float resistance) {
+    spef::Spef data;
+    data.capacitance_unit = "1 FF";
+    data.resistance_unit = "1 OHM";
+    spef::Net net("wire", 100);
+    net.caps.emplace_back("a", "", 0);
+    net.caps.emplace_back("y", "", 100);
+    net.ress.emplace_back("a", "y", resistance);
+    data.nets.push_back(std::move(net));
+    timer.read_parasitics(std::move(data));
+  };
+  build(deferred);
+  build(reference);
+  deferred.update_netlist();
+  ASSERT_TRUE(deferred.pins().contains("y"));
+  ASSERT_EQ(deferred.pins().at("y").net()->name(), "wire");
+  EXPECT_FALSE(deferred.pins().at("y").at(ot::MAX, ot::RISE));
+  // Separate builder barriers must preserve all dirty frontiers, including
+  // after the last barrier when no new task is queued before the timing query.
+  for (auto model : {ot::RcModel::effective_capacitance, ot::RcModel::elmore,
+                     ot::RcModel::effective_capacitance}) {
+    deferred.set_rc_model(model);
+    reference.set_rc_model(model);
+    deferred.update_netlist();
+    for (float resistance : {1000.f, 2000.f}) {
+      const auto old = deferred.pins().at("y").at(ot::MAX, ot::RISE);
+      rc(deferred, resistance);
+      rc(reference, resistance);
+      deferred.update_netlist();
+      deferred.update_netlist(); // idempotent structural barrier
+      EXPECT_EQ(deferred.pins().at("y").at(ot::MAX, ot::RISE), old);
+      EXPECT_EQ(deferred.report_at("y", ot::MAX, ot::RISE),
+                reference.report_at("y", ot::MAX, ot::RISE));
+      EXPECT_EQ(deferred.report_slew("y", ot::MAX, ot::RISE),
+                reference.report_slew("y", ot::MAX, ot::RISE));
+      EXPECT_EQ(deferred.report_slack("y", ot::MAX, ot::RISE),
+                reference.report_slack("y", ot::MAX, ot::RISE));
+    }
+  }
+  // Deleting connectivity on a materialized dirty frontier must not leave
+  // stale arc tasks behind when propagation is finally requested.
+  deferred.set_rat("y", ot::MAX, ot::RISE, 3);
+  deferred.update_netlist();
+  deferred.remove_net("wire");
+  deferred.update_netlist();
+  deferred.update_timing();
+  EXPECT_EQ(deferred.pins().at("y").net(), nullptr);
+}
+
+TEST(RcWaveform, RankingModelTracksRcAndCanReturnToDetailedTiming) {
+  ot::Timer timer;
+  timer.set_num_threads(1).set_rc_model(ot::RcModel::elmore);
+  timer.set_time_unit(ot::second_t(1e-12));
+  timer.set_capacitance_unit(ot::farad_t(1e-15));
+  timer.set_resistance_unit(ot::ohm_t(1e3));
+  timer.insert_primary_input("a").insert_primary_output("y").insert_net("wire");
+  timer.disconnect_pin("a")
+      .disconnect_pin("y")
+      .connect_pin("a", "wire")
+      .connect_pin("y", "wire");
+  for (auto split : {ot::MIN, ot::MAX})
+    for (auto edge : {ot::RISE, ot::FALL})
+      timer.set_at("a", split, edge, 0)
+          .set_slew("a", split, edge, 0)
+          .set_rat("y", split, edge, 1000);
+  for (const auto model :
+       {ot::RcModel::elmore, ot::RcModel::effective_capacitance,
+        ot::RcModel::elmore}) {
+    timer.set_rc_model(model);
+    for (float resistance : {1000.f, 2000.f, 1000.f}) {
+      spef::Spef data;
+      data.capacitance_unit = "1 FF";
+      data.resistance_unit = "1 OHM";
+      spef::Net net("wire", 100);
+      net.caps.emplace_back("a", "", 0);
+      net.caps.emplace_back("y", "", 100);
+      net.ress.emplace_back("a", "y", resistance);
+      data.nets.push_back(std::move(net));
+      timer.read_parasitics(std::move(data));
+      for (auto edge : {ot::RISE, ot::FALL}) {
+        const double tau = resistance * .1;
+        EXPECT_NEAR(timer.report_at("y", ot::MAX, edge).value(),
+                    tau * (model == ot::RcModel::elmore ? 1. : std::log(2.)),
+                    1e-4);
+        EXPECT_NEAR(timer.report_slew("y", ot::MAX, edge).value(),
+                    tau * std::log(4.), 1e-4);
+      }
+    }
+  }
+}
+
 TEST(RcWaveform, RemovingAnAnnotatedGateInvalidatesItsOldRcPins) {
   const auto path =
       std::filesystem::path(std::getenv("TEST_TMPDIR")) / "rc_reconnect.lib";
   std::ofstream(path) << R"lib(library(rc) {
     time_unit : "1ps"; capacitive_load_unit(1,ff);
     pulling_resistance_unit : "1kohm";
+    cell(EMPTY) { area : 3; }
     cell(BUF) { area : 1;
       pin(A) { direction : input; capacitance : 1; }
       pin(Y) { direction : output; function : "A";
@@ -179,6 +290,7 @@ TEST(RcWaveform, RemovingAnAnnotatedGateInvalidatesItsOldRcPins) {
     EXPECT_NEAR(timer.report_slew("v:A", ot::MAX, edge).value(), 1, 1e-5);
   }
   timer.remove_gate("v").disconnect_pin("y").connect_pin("y", "middle");
+  timer.update_netlist();
   EXPECT_NEAR(timer.report_at("y", ot::MAX, ot::RISE).value(), 1, 1e-5);
   timer.insert_gate("v", "BUF").connect_pin("v:A", "middle");
   timer.connect_pin("v:Y", "out").disconnect_pin("y").connect_pin("y", "out");
@@ -190,4 +302,13 @@ TEST(RcWaveform, RemovingAnAnnotatedGateInvalidatesItsOldRcPins) {
     EXPECT_NEAR(timer.report_at("y", ot::MAX, edge).value(), 13, 1e-4);
     EXPECT_NEAR(timer.report_slew("v:A", ot::MAX, edge).value(), 1, 1e-5);
   }
+  EXPECT_EQ(timer.report_area(), 2);
+  // A cell with no pins changes area without creating timing frontiers. The
+  // materialization barrier must still invalidate aggregate report caches.
+  timer.insert_gate("physical_only", "EMPTY");
+  timer.update_netlist();
+  EXPECT_EQ(timer.report_area(), 5);
+  timer.remove_gate("physical_only");
+  timer.update_netlist();
+  EXPECT_EQ(timer.report_area(), 2);
 }

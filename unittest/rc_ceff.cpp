@@ -6,6 +6,25 @@ namespace {
 auto table(double c) -> std::optional<std::pair<double, double>> {
   return std::pair{10 + .5 * c, 8 + 2 * c};
 }
+double reference_crossing(const ot::RcDriver &d, double v, double wire) {
+  double lo = 0, hi = d.duration;
+  if (hi <= 0)
+    hi = std::max({d.slow, d.fast, wire});
+  if (hi <= 0)
+    return 0.;
+  for (int k = 0; k < 128 && d.voltage(hi, wire) < v; ++k)
+    hi *= 2;
+  if (!std::isfinite(hi) || d.voltage(hi, wire) < v)
+    return std::numeric_limits<double>::infinity();
+  for (int k = 0; k < 80; ++k) {
+    const double mid = (lo + hi) * .5;
+    if (d.voltage(mid, wire) < v)
+      lo = mid;
+    else
+      hi = mid;
+  }
+  return (lo + hi) * .5;
+}
 } // namespace
 TEST(RcCeff, RampVoltageAndCrossingAreInverses) {
   for (double tau : {0., .1, 10., 1000.})
@@ -26,29 +45,15 @@ TEST(RcCeff, CascadedPolesMatchStepCircuit) {
     EXPECT_NEAR(ot::rc_cascade_voltage(t, 100, 100, 0), repeated, 1e-7);
   }
 }
-TEST(RcCeff, PreparedCrossingMatchesDirectWaveformEvaluationExactly) {
-  const auto direct = [](const ot::RcDriver& d, double v, double wire) {
-    double lo = 0, hi = d.duration;
-    if (hi <= 0) hi = std::max({d.slow, d.fast, wire});
-    if (hi <= 0) return 0.;
-    for (int k = 0; k < 128 && d.voltage(hi, wire) < v; ++k) hi *= 2;
-    if (!std::isfinite(hi) || d.voltage(hi, wire) < v)
-      return std::numeric_limits<double>::infinity();
-    for (int k = 0; k < 36; ++k) {
-      const double mid = (lo + hi) * .5;
-      if (d.voltage(mid, wire) < v) lo = mid;
-      else hi = mid;
-    }
-    return (lo + hi) * .5;
-  };
+TEST(RcCeff, SafeguardedCrossingMatchesReferenceAndWaveform) {
   for (double slow : {.01, 1., 100.})
     for (double fast : {0., slow * .01, slow * .99999, slow})
       for (double duration : {0., .01, 1., 100.})
         // Include either cascade's coincident-pole fallback and both sides
         // of its perturbation threshold, as well as an ordinary shared pole.
-        for (double wire : {0., .01, 1., 100., slow, slow * .99999,
-                            slow * .9998, slow * 1.0002, fast,
-                            fast * .99999, fast * .9998, fast * 1.0002})
+        for (double wire :
+             {0., .01, 1., 100., slow, slow * .99999, slow * .9998,
+              slow * 1.0002, fast, fast * .99999, fast * .9998, fast * 1.0002})
           for (double weight : {0., .2, 1.})
             for (double v : {.01, .1, .5, .9, .99}) {
               ot::RcDriver d;
@@ -56,8 +61,56 @@ TEST(RcCeff, PreparedCrossingMatchesDirectWaveformEvaluationExactly) {
               d.fast = fast;
               d.duration = duration;
               d.slow_weight = weight;
-              EXPECT_EQ(d.crossing(v, wire), direct(d, v, wire));
+              if (v <= d.voltage(std::numeric_limits<double>::min(), wire)) {
+                // A zero-duration source can cross during its instantaneous
+                // jump; there is no t for which voltage(t) equals v.
+                EXPECT_EQ(d.crossing(v, wire), 0);
+                continue;
+              }
+              const double reference = reference_crossing(d, v, wire);
+              const double crossing = d.crossing(v, wire);
+              EXPECT_NEAR(crossing, reference, 2e-8 * reference);
+              EXPECT_NEAR(d.voltage(crossing, wire), v, 2e-9);
             }
+}
+
+TEST(RcCeff, CrossingHandlesExtremeTimeConstantRatios) {
+  for (double slow : {1e-6, 1., 1e6})
+    for (double ratio : {1e-12, 1e-6, .1, 1.})
+      for (double duration : {0., slow * 1e-12, slow, slow * 1e12})
+        for (double wire : {0., slow * 1e-12, slow, slow * 1e12})
+          for (double weight : {0., 1e-8, .2, 1.})
+            for (double v : {.01, .5, .99}) {
+              ot::RcDriver d;
+              d.slow = slow;
+              d.fast = slow * ratio;
+              d.duration = duration;
+              d.slow_weight = weight;
+              SCOPED_TRACE(::testing::Message()
+                           << slow << ' ' << ratio << ' ' << duration << ' '
+                           << wire << ' ' << weight << ' ' << v);
+              if (v <= d.voltage(std::numeric_limits<double>::min(), wire)) {
+                EXPECT_EQ(d.crossing(v, wire), 0);
+                continue;
+              }
+              const double reference = reference_crossing(d, v, wire);
+              const double crossing = d.crossing(v, wire);
+              EXPECT_NEAR(crossing, reference, 2e-8 * reference);
+              EXPECT_NEAR(d.voltage(crossing, wire), v, 2e-9);
+            }
+}
+
+TEST(RcCeff, RampCrossingsRemainAccurateAcrossScales) {
+  for (double tau : {1e-6, 1., 1e6})
+    for (double ratio : {1e-6, 1e-3, .1, 1., 2., 10., 1e3, 1e6})
+      for (double voltage : {1e-6, .01, .1, .49, .5, .9, .99999}) {
+        const double duration = tau * ratio;
+        const double crossing = ot::rc_ramp_crossing(tau, duration, voltage);
+        EXPECT_TRUE(std::isfinite(crossing));
+        EXPECT_GT(crossing, 0);
+        EXPECT_NEAR(ot::rc_ramp_voltage(crossing, tau, duration), voltage, 2e-8)
+            << "tau " << tau << " ratio " << ratio << " voltage " << voltage;
+      }
 }
 
 TEST(RcCeff, ResistanceShieldsRemoteCapacitance) {

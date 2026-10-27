@@ -438,6 +438,8 @@ float Net::_load(Split m, Tran t) const {
 
 std::optional<RcGateResult> Net::_gate_response(const Timing& timing, Split split,
                                                 Tran input, Tran output, float slew, const SlewThresholds* thresholds) const {
+  if (_rc_model == RcModel::elmore)
+    return {};
   const auto* tree = std::get_if<Rct>(&_rct);
   if (!tree || !_root) return {};
   const auto table = [&](double cap) -> std::optional<std::pair<double,double>> {
@@ -453,6 +455,20 @@ std::optional<RcGateResult> Net::_gate_response(const Timing& timing, Split spli
 std::optional<RcResponse> Net::_response(Split m, Tran t, float si, Pin& to) const {
   const auto tau = _delay(m, t, to);
   if (!tau || !_root) return std::nullopt;
+  if (_rc_model == RcModel::elmore) {
+    // A closed-form ranking model: characterized gate delay at total load,
+    // Elmore wire delay and quadrature slew. No effective-C or crossing solve.
+    const auto &from = _root->thresholds(m);
+    const auto &sink = to.thresholds(m);
+    const double duration = si * from.derate / from.span(t);
+    const double shift = duration * (sink.input[t] - from.output[t]);
+    const double lo = t == RISE ? sink.lower[t] : 1 - sink.upper[t];
+    const double hi = t == RISE ? sink.upper[t] : 1 - sink.lower[t];
+    const double wire_slew = *tau * std::log((1 - lo) / (1 - hi));
+    return RcResponse{
+        float(*tau + (t == RISE ? shift : -shift)),
+        float(std::hypot(duration * sink.span(t), wire_slew) / sink.derate)};
+  }
   if (_elmore_fallback[m][t]) {
     // A load-insensitive or otherwise unfit Liberty driver does not justify
     // inventing an output waveform. Retain its characterized transition and

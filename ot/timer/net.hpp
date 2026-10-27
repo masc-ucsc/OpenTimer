@@ -8,6 +8,8 @@
 
 namespace ot {
 
+enum class RcModel { effective_capacitance, elmore };
+
 // Forward declaration
 class RctEdge;
 class RctNode;
@@ -179,6 +181,7 @@ class Net {
     std::optional<spef::Net> _spef_net;
 
     bool _rc_timing_updated {false};
+    RcModel _rc_model{RcModel::effective_capacitance};
     TimingData<std::optional<RcDriver>, MAX_SPLIT, MAX_TRAN> _driver;
     TimingData<std::optional<float>, MAX_SPLIT, MAX_TRAN> _effective_cap;
     TimingData<bool, MAX_SPLIT, MAX_TRAN> _elmore_fallback {};

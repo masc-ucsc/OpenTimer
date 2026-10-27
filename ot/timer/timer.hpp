@@ -35,6 +35,9 @@ class Timer {
     
     // Builder
     Timer& set_num_threads(unsigned);
+    // Cheap total-load/Elmore estimates for optimization ranking. Switching
+    // back restores the detailed waveform model and invalidates prior timing.
+    Timer &set_rc_model(RcModel);
     Timer& read_celllib(std::filesystem::path, std::optional<Split> = {});
     Timer& read_verilog(std::filesystem::path);
     Timer& read_spef(std::filesystem::path);
@@ -95,6 +98,11 @@ class Timer {
     Timer& set_current_unit(ampere_t);
 
     // Action.
+    // Apply queued library, topology, RC and constraint edits without timing
+    // propagation. Structural accessors are current afterward; timing remains
+    // dirty until update_timing or a report query. Multiple edits can therefore
+    // be materialized before paying for one final propagation.
+    void update_netlist();
     void update_timing();
 
     std::optional<float> report_at(const std::string&, Split, Tran);
@@ -169,6 +177,7 @@ class Timer {
     bool _scc_analysis {false};
     bool _preset_clear_arcs {true};
     bool _falling_same_cycle {false};
+    RcModel _rc_model{RcModel::effective_capacitance};
 
     std::optional<tf::Task> _lineage;
     std::optional<CpprAnalysis> _cppr_analysis;
@@ -230,6 +239,7 @@ class Timer {
     void _add_to_lineage(tf::Task);
     void _rebase_unit(Celllib&);
     void _rebase_unit(spef::Spef&);
+    void _update_netlist();
     void _update_timing();
     void _update_endpoints();
     void _update_area();
