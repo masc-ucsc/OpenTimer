@@ -551,7 +551,7 @@ std::optional<float> Net::_slew(Split m, Tran t, float si, Pin& to) const {
       return si;
     },
     [&] (const Rct& rct) -> std::optional<float> {
-      if(auto node = rct.node(to._name); node) {
+      if(auto node = rct.node(to.name()); node) {
         return node->slew(m, t, si);
       }
       else return std::nullopt;
@@ -570,7 +570,7 @@ std::optional<float> Net::_delay(Split m, Tran t, Pin& to) const {
       return 0.0f;
     },
     [&] (const Rct& rct) -> std::optional<float> {
-      if(auto node = rct.node(to._name); node) {
+      if(auto node = rct.node(to.name()); node) {
         return node->delay(m, t);
       }
       else return std::nullopt;

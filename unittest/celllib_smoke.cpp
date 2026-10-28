@@ -576,6 +576,41 @@ TEST_F(CelllibSmoke, IdealClockPreservesInversionDataRcAndCanRestorePropagation)
   EXPECT_FALSE(timer.pins().at("f0:CLK").is_ideal_clock());
 }
 
+TEST_F(CelllibSmoke, NamesSurviveCallerMutationRehashAndUnrelatedRemoval) {
+  std::string source(160, 'x');
+  const auto expected = source;
+  ot::Pin standalone(source);
+  source.assign(160, 'y');
+  EXPECT_EQ(standalone.name(), expected);
+  ot::Pin temporary(std::string(160, 'z'));
+  EXPECT_EQ(temporary.name(), std::string(160, 'z'));
+
+  write(R"lib(library(names) { cell(BUF) {
+    pin(A) { direction : input; }
+    pin(Y) { direction : output; function : "A"; }
+  } })lib");
+  ot::Timer timer;
+  timer.read_celllib(path);
+  timer.set_num_threads(1).insert_primary_input(expected).update_netlist();
+  const auto *retained = &timer.pins().at(expected);
+  const auto &name = retained->name();
+  for (int i = 0; i < 512; ++i)
+    timer.insert_gate("input_" + std::to_string(i), "BUF");
+  timer.update_netlist();
+  EXPECT_EQ(retained->name(), expected);
+  EXPECT_EQ(name, expected);
+  EXPECT_EQ(&timer.pins().at(expected), retained);
+  for (int i = 0; i < 512; ++i)
+    timer.remove_gate("input_" + std::to_string(i));
+  timer.update_netlist();
+  EXPECT_EQ(name, expected);
+  timer.insert_gate(expected, "BUF").update_netlist();
+  EXPECT_EQ(timer.pins().at(expected + ":A").name(), expected + ":A");
+  timer.remove_gate(expected).update_netlist();
+  timer.insert_gate(expected, "BUF").update_netlist();
+  EXPECT_EQ(timer.pins().at(expected + ":A").name(), expected + ":A");
+}
+
 TEST_F(CelllibSmoke, ArcDelaysRefreshLoadsValidityAndIdealClockTransitions) {
   write(R"lib(library(delay_storage) {
     time_unit : "1ps"; capacitive_load_unit(1,ff);

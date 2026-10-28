@@ -99,8 +99,11 @@ Pin::Rat::Rat(Arc* a, Split el, Tran rf, float v) :
 // ------------------------------------------------------------------------------------------------
 
 // Constructor
-Pin::Pin(const std::string& name) : _name {name} {
-}
+Pin::Pin(const std::string& name)
+    : _owned_name(std::make_unique<std::string>(name)),
+      _name_ref(_owned_name.get()) {}
+
+Pin::Pin(const std::string& name, Borrowed_name) : _name_ref(&name) {}
 
 // Procedure: _reset_slew
 void Pin::_reset_slew() {

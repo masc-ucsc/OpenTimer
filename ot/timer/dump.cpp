@@ -19,11 +19,11 @@ void Timer::_dump_graph(std::ostream& os) const {
 
   os << "digraph TimingGraph {\n";
   for(const auto& pin : _pins) {
-    os << "  \"" << pin.second._name << "\";\n";
+    os << "  \"" << pin.second.name() << "\";\n";
   }
 
   for(const auto& arc : _arcs) {
-    os << "  \"" << arc._from._name << "\" -> \"" << arc._to._name << "\";\n";
+    os << "  \"" << arc._from.name() << "\" -> \"" << arc._to.name() << "\";\n";
   }
   os << "}\n";
 }
@@ -52,7 +52,7 @@ void Timer::_dump_power(std::ostream& os) const {
 
     total_ipower += pin_total_ipower;
 
-    os << std::setw(plen) << pin._name << '\n';
+    os << std::setw(plen) << pin.name() << '\n';
 
     total_cap    += pin_total_cap;
   }
@@ -208,7 +208,7 @@ void Timer::_dump_pin_cap(std::ostream& os) const {
         os << std::setw(10) << pin.cap(el, rf) << "  ";
       }
 
-      os << std::setw(plen) << pin._name << '\n';
+      os << std::setw(plen) << pin.name() << '\n';
     }
     os << std::setfill('-') << std::setw(49 + plen) << '\n';
   }
@@ -250,7 +250,7 @@ void Timer::_dump_slew(std::ostream& os) const {
         os << "  ";
       }
 
-      os << std::setw(plen) << pin._name << '\n';
+      os << std::setw(plen) << pin.name() << '\n';
     }
     os << std::setfill('-') << std::setw(49 + plen) << '\n';
   }
@@ -292,7 +292,7 @@ void Timer::_dump_slack(std::ostream& os) const {
         os << "  ";
       }
 
-      os << std::setw(plen) << pin._name << '\n';
+      os << std::setw(plen) << pin.name() << '\n';
     }
     os << std::setfill('-') << std::setw(49 + plen) << '\n';
   }
@@ -334,7 +334,7 @@ void Timer::_dump_at(std::ostream& os) const {
         os << "  ";
       }
 
-      os << std::setw(plen) << pin._name << '\n';
+      os << std::setw(plen) << pin.name() << '\n';
 
 #if 0
       auto sr = pin.slew(MAX, RISE);
@@ -346,7 +346,7 @@ void Timer::_dump_at(std::ostream& os) const {
         slew_max = *sf;
       }
       if (slew_max>0) {
-        os << std::setw(plen) << slew_max << " " << pin._name << '\n';
+        os << std::setw(plen) << slew_max << " " << pin.name() << '\n';
       }
 #endif
     }
@@ -391,7 +391,7 @@ void Timer::_dump_rat(std::ostream& os) const {
         os << "  ";
       }
 
-      os << std::setw(plen) << pin._name << '\n';
+      os << std::setw(plen) << pin.name() << '\n';
     }
     os << std::setfill('-') << std::setw(49 + plen) << '\n';
   }
@@ -621,7 +621,7 @@ void Timer::_dump_spef(std::ostream& os) const {
         else {
           os << "*I ";
         }
-        os << pin->_name << ' ';
+        os << pin->name() << ' ';
 
         if(pin->is_input()) {
           os << "I\n";

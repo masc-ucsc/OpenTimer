@@ -1,6 +1,7 @@
 #ifndef OT_TIMER_PIN_HPP_
 #define OT_TIMER_PIN_HPP_
 
+#include <memory>
 #include <ot/liberty/celllib.hpp>
 #include <ot/timer/arc_list.hpp>
 
@@ -76,6 +77,10 @@ class PrimaryOutput {
 
 // Class: Pin
 class Pin {
+  class Borrowed_name {
+    friend class Timer;
+    Borrowed_name() = default;
+  };
   
   // Keep the two-valued provenance enums compact inside each optional record.
   // Public Split/Tran types and all float values retain their representation.
@@ -167,6 +172,9 @@ class Pin {
   public:
     
     Pin(const std::string&);
+    // Only Timer can create this tag. Its unordered-map key owns the name;
+    // rehash preserves the key's address, and the pin dies before that key.
+    Pin(const std::string&, Borrowed_name);
 
     inline const std::string& name() const;
     inline const PrimaryInput* primary_input() const;
@@ -197,7 +205,8 @@ class Pin {
 
   private:
 
-    std::string _name;
+    std::unique_ptr<std::string> _owned_name;
+    const std::string* _name_ref;
     std::array<const SlewThresholds*, 2> _default_thresholds {nullptr, nullptr};
     bool _ideal_clock {false};
     Clock* _ideal_clock_source {nullptr};
@@ -298,7 +307,7 @@ inline auto Pin::Rat::pi() const {
 
 // Function: name
 inline const std::string& Pin::name() const {
-  return _name;
+  return *_name_ref;
 }
 
 // Function: idx

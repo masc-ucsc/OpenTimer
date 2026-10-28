@@ -20,7 +20,7 @@ Arc::Arc(Pin& from, Pin& to, TimingView t) :
 
 // Function: name
 std::string Arc::name() const {
-  return _from._name + "->" + _to._name;
+  return _from.name() + "->" + _to.name();
 }
 
 // Function: is_self_loop

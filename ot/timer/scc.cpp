@@ -51,12 +51,12 @@ std::string SCC::_dump() const {
 
   os << "digraph SCC {\n";
   for(auto from : _pins) {
-    os << "  \"" << from->_name << "\";\n";
+    os << "  \"" << from->name() << "\";\n";
 
     for(auto& arc : from->_fanout) {
       if(from->_scc == arc->_to._scc) {
         os << "  \"" 
-           << from->_name << "\" -> \"" << arc->_to._name 
+           << from->name() << "\" -> \"" << arc->_to.name()
            << "\";\n";  
       }
     }

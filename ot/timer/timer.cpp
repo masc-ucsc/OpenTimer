@@ -102,9 +102,9 @@ size_t Timer::_max_pin_name_size() const {
   else {
     return std::max_element(_pins.begin(), _pins.end(), 
       [] (const auto& l, const auto& r) {
-        return l.second._name.size() < r.second._name.size();
+        return l.second.name().size() < r.second.name().size();
       }
-    )->second._name.size();
+    )->second.name().size();
   }
 }
 
@@ -563,7 +563,7 @@ void Timer::_remove_net(Net& net) {
 Pin& Timer::_insert_pin(const std::string& name) {
   
   // pin already exists
-  if(auto [itr, inserted] = _pins.try_emplace(name, name); !inserted) {
+  if(auto [itr, inserted] = _pins.try_emplace(name, name, Pin::Borrowed_name{}); !inserted) {
     return itr->second;
   }
   // inserted a new pon
@@ -571,6 +571,7 @@ Pin& Timer::_insert_pin(const std::string& name) {
     
     // Generate the pin idx
     auto& pin = itr->second;
+    pin._name_ref = &itr->first;
     for(auto el : {MIN, MAX}) if(_celllib[el]) pin._default_thresholds[el] = &_celllib[el]->thresholds;
     
     // Assign the idx mapping
@@ -597,7 +598,7 @@ void Timer::_remove_pin(Pin& pin) {
   _pin_idx_gen.recycle(pin._idx);
 
   // remove the pin
-  _pins.erase(pin._name);
+  _pins.erase(pin.name());
 }
 
 // Function: cppr
@@ -868,7 +869,7 @@ void Timer::_remove_arc(Arc& arc) {
 // Insert an net arc to the timer.
 Arc& Timer::_insert_arc(Pin& from, Pin& to, Net& net) {
 
-  OT_LOGF_IF(&from == &to, "net arc is a self loop at ", to._name);
+  OT_LOGF_IF(&from == &to, "net arc is a self loop at ", to.name());
 
   // Create a new arc
   auto& arc = _arcs.emplace_front(from, to, net);
@@ -922,7 +923,7 @@ Timer& Timer::set_case_masks(std::vector<std::tuple<std::string, std::string, st
     for(const auto& [from, to, mask] : masks) {
       const auto it = _pins.find(from);
       OT_LOGF_IF(it == _pins.end() || mask > 15, "invalid case-analysis arc: ", from);
-      for(auto* arc : it->second._fanout) if(arc->is_cell_arc() && arc->_to._name == to) {
+      for(auto* arc : it->second._fanout) if(arc->is_cell_arc() && arc->_to.name() == to) {
         arc->_case_mask = mask;
         _insert_frontier(arc->_from, arc->_to);
       }
@@ -985,7 +986,7 @@ void Timer::_fprop_slew(Pin& pin) {
 
   // PI
   if(pin.primary_input()) {
-    auto* pi = &_pis.at(pin._name);
+    auto* pi = &_pis.at(pin.name());
     FOR_EACH_EL_RF(el, rf) {
       pi->_driver_delay[el][rf] = 0;
       if(const auto& driver = pi->_driver[el][rf]) {
