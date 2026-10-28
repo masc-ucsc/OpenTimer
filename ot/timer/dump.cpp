@@ -535,43 +535,7 @@ void Timer::_dump_rctree(std::ostream& os) const {
        << (rct->_root ? *names.at(rct->_root) : "nil") << '\n';
 
     for(const auto& [node_name, node] : rct->_nodes) {
-      os << node_name << ' ' << node._ncap[MIN][RISE] << '\n';
-
-      //os << "ures:";
-      //FOR_EACH_EL_RF(el, rf) {
-      //  os << ' ' << node._ures[el][rf];
-      //}
-      //os << '\n';
-      //
-      //os << "load:";
-      //FOR_EACH_EL_RF(el, rf) {
-      //  os << ' ' << node._load[el][rf];
-      //}
-      //os << '\n';
-      //
-      //os << "beta:";
-      //FOR_EACH_EL_RF(el, rf) {
-      //  os << ' ' << node._beta[el][rf];
-      //}
-      //os << '\n';
-      //
-      //os << "delay:";
-      //FOR_EACH_EL_RF(el, rf) {
-      //  os << ' ' << node._delay[el][rf];
-      //}
-      //os << '\n';
-      //
-      //os << "ldelay:";
-      //FOR_EACH_EL_RF(el, rf) {
-      //  os << ' ' << node._ldelay[el][rf];
-      //}
-      //os << '\n';
-
-      //os << "impulse:";
-      //FOR_EACH_EL_RF(el, rf) {
-      //  os << ' ' << node._impulse[el][rf];
-      //}
-      //os << '\n';
+      os << node_name << ' ' << node._ncap << '\n';
     }
 
     for(const auto& edge : rct->_edges) {
@@ -674,7 +638,7 @@ void Timer::_dump_spef(std::ostream& os) const {
       std::unordered_map<const RctNode*, const std::string*> names;
       for(const auto& node : rct->_nodes) {
         names.emplace(&node.second, &node.first);
-        os << ++idx << ' ' << node.first << ' ' << node.second._ncap[MIN][RISE] << '\n';
+        os << ++idx << ' ' << node.first << ' ' << node.second._ncap << '\n';
       }
 
       // *RES section

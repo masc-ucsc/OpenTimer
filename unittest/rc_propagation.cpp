@@ -199,6 +199,24 @@ TEST_F(RcPropagation, ImmediateRcBatchesPreserveFrontiersWithoutPropagating) {
   }
 }
 
+TEST_F(RcPropagation, QueuedTemporaryParasiticsKeepTheLatestReplacement) {
+  timer.set_resistance_unit(ot::ohm_t(1000)); // kOhm * fF = ps
+  transition(20);
+  parasitics(1000);
+  parasitics(2000);
+  timer.update_netlist(); // Both temporary input objects have been consumed.
+  check(20, ot::RcModel::effective_capacitance);
+  EXPECT_FLOAT_EQ(
+      timer.pins().at("a").net()->rct()->delay("y", ot::MAX, ot::RISE), 16);
+  timer.update_timing();
+  EXPECT_FLOAT_EQ(
+      timer.pins().at("a").net()->rct()->delay("y", ot::MAX, ot::RISE), 16);
+  parasitics(1000);
+  check(20, ot::RcModel::effective_capacitance);
+  EXPECT_FLOAT_EQ(
+      timer.pins().at("a").net()->rct()->delay("y", ot::MAX, ot::RISE), 8);
+}
+
 TEST_F(RcPropagation, RcLabelsSurviveRehashAndIncrementalReplacement) {
   constexpr int segments = 40;
   // RC products use the timer units: kOhm * fF = ps.
@@ -289,6 +307,79 @@ TEST_F(RcPropagation, BranchedRcPreservesLoadDelayAndExportAcrossReplacement) {
           std::string::npos);
       if (branches == 17)
         EXPECT_EQ(exported.str().find("leaf_127"), std::string::npos);
+    }
+  }
+}
+
+TEST_F(RcPropagation, BranchedMomentsKeepCornerLoadsSeparateAcrossUpdates) {
+  timer.set_resistance_unit(ot::ohm_t(1000));
+  timer.insert_primary_output("z").disconnect_pin("z").connect_pin("z", "a");
+  transition(20);
+  spef::Spef data;
+  data.capacitance_unit = "1 FF";
+  data.resistance_unit = "1 KOHM";
+  spef::Net net("a", 10);
+  net.caps = {{"a", "", 1}, {"trunk", "", 2}, {"y", "", 3}, {"z", "", 4}};
+  net.ress = {{"a", "trunk", 2}, {"trunk", "y", 3}, {"trunk", "z", 5}};
+  data.nets.push_back(std::move(net));
+  timer.read_parasitics(std::move(data));
+  for (int round : {0, 3, 1}) {
+    for (auto split : {ot::MIN, ot::MAX}) {
+      for (auto tran : {ot::RISE, ot::FALL}) {
+        timer.set_load("y", split, tran, 5 + round + 2 * split + tran);
+        timer.set_load("z", split, tran, 1 + round + split + 3 * tran);
+      }
+    }
+    timer.update_timing();
+    const auto *tree = timer.pins().at("a").net()->rct();
+    ASSERT_NE(tree, nullptr);
+    EXPECT_FLOAT_EQ(tree->total_ncap(), 10);
+    for (auto split : {ot::MIN, ot::MAX}) {
+      for (auto tran : {ot::RISE, ot::FALL}) {
+        const float y = 3 + 5 + round + 2 * split + tran;
+        const float z = 4 + 1 + round + split + 3 * tran;
+        const float trunk_delay = 2 * (2 + y + z);
+        const float y_delay = trunk_delay + 3 * y;
+        const float z_delay = trunk_delay + 5 * z;
+        const float trunk_moment =
+            2 * (2 * trunk_delay + y * y_delay + z * z_delay);
+        const float y_impulse =
+            2 * (trunk_moment + 3 * y * y_delay) - y_delay * y_delay;
+        const float z_impulse =
+            2 * (trunk_moment + 5 * z * z_delay) - z_delay * z_delay;
+        EXPECT_FLOAT_EQ(tree->node("a")->load(split, tran), 3 + y + z);
+        EXPECT_FLOAT_EQ(tree->node("y")->cap(split, tran), y);
+        EXPECT_FLOAT_EQ(tree->node("z")->cap(split, tran), z);
+        EXPECT_FLOAT_EQ(tree->delay("trunk", split, tran), trunk_delay);
+        EXPECT_FLOAT_EQ(tree->delay("y", split, tran), y_delay);
+        EXPECT_FLOAT_EQ(tree->delay("z", split, tran), z_delay);
+        EXPECT_FLOAT_EQ(tree->slew("y", split, tran, 20),
+                        std::sqrt(400 + y_impulse));
+        EXPECT_FLOAT_EQ(tree->slew("z", split, tran, -20),
+                        -std::sqrt(400 + z_impulse));
+      }
+    }
+  }
+}
+
+TEST_F(RcPropagation, MaterializedWireCapacitanceScalesOnceForEveryCorner) {
+  timer.set_resistance_unit(ot::ohm_t(1000));
+  transition(20);
+  parasitics(1000);
+  timer.update_timing();
+  for (const auto [unit, scale] : {std::pair{1e-12, .001f}, {1e-15, 1.f}}) {
+    timer.set_capacitance_unit(ot::farad_t(unit));
+    timer.update_timing();
+    const auto *tree = timer.pins().at("a").net()->rct();
+    ASSERT_NE(tree, nullptr);
+    EXPECT_NEAR(tree->total_ncap(), 10 * scale, 1e-5 * scale);
+    for (auto split : {ot::MIN, ot::MAX}) {
+      for (auto tran : {ot::RISE, ot::FALL}) {
+        EXPECT_NEAR(tree->node("a")->cap(split, tran), 2 * scale, 1e-5 * scale);
+        EXPECT_NEAR(tree->node("y")->cap(split, tran), 8 * scale, 1e-5 * scale);
+        EXPECT_NEAR(tree->node("a")->load(split, tran), 10 * scale,
+                    1e-5 * scale);
+      }
     }
   }
 }

@@ -1,6 +1,9 @@
 #ifndef OT_TIMER_NET_HPP_
 #define OT_TIMER_NET_HPP_
 
+#include <cstdint>
+#include <limits>
+#include <memory>
 #include <ot/spef/spef.hpp>
 #include <ot/timer/pin.hpp>
 #include <ot/timer/rc_ceff.hpp>
@@ -35,18 +38,18 @@ class RctNode {
     float delay(Split, Tran) const;
 
   private:
-
-    TimingData<float, MAX_TRAN, MAX_SPLIT> _ures   ; 
-    TimingData<float, MAX_TRAN, MAX_SPLIT> _ncap   ;
-    TimingData<float, MAX_TRAN, MAX_SPLIT> _load   ; 
-    TimingData<float, MAX_TRAN, MAX_SPLIT> _beta   ;
-    TimingData<float, MAX_TRAN, MAX_SPLIT> _delay  ;
-    TimingData<float, MAX_TRAN, MAX_SPLIT> _ldelay ;
+    TimingData<float, MAX_TRAN, MAX_SPLIT> _load;
+    TimingData<float, MAX_TRAN, MAX_SPLIT> _delay;
     TimingData<float, MAX_TRAN, MAX_SPLIT> _impulse;
 
-    // Edge indices remain stable when the owning vector grows.
-    std::vector<size_t> _fanout;
-
+    // Wire capacitance is shared by all corners/transitions. Pin capacitance
+    // remains corner-specific and is added by cap().
+    float _ncap{0.0f};
+    uint32_t _index{0};
+    static constexpr uint32_t no_edge = std::numeric_limits<uint32_t>::max();
+    // Append-ordered links live in the edges, avoiding a vector per node.
+    uint32_t _fanout{no_edge};
+    uint32_t _last_fanout{no_edge};
     Pin* _pin {nullptr};
 
     void _scale_capacitance(float);
@@ -74,6 +77,7 @@ class RctEdge {
     RctNode& _to;
     
     float _res {0.0f};
+    uint32_t _next{std::numeric_limits<uint32_t>::max()};
 
     void _scale_resistance(float);
 };
@@ -120,10 +124,17 @@ class Rct {
     std::unordered_map<std::string, RctNode> _nodes;
     std::vector<RctEdge> _edges;
 
+    // Moments are needed only while updating one tree. Do not retain them
+    // on every node between timing evaluations.
+    struct Moments {
+      TimingData<float, MAX_TRAN, MAX_SPLIT> beta{};
+      TimingData<float, MAX_TRAN, MAX_SPLIT> ldelay{};
+    };
+    RctNode &_insert_node(const std::string &);
     void _update_load(RctNode*, RctNode*);
     void _update_delay(RctNode*, RctNode*);
-    void _update_ldelay(RctNode*, RctNode*);
-    void _update_response(RctNode*, RctNode*);
+    void _update_ldelay(RctNode *, RctNode *, std::vector<Moments> &);
+    void _update_response(RctNode *, RctNode *, std::vector<Moments> &);
     void _scale_capacitance(float);
     void _scale_resistance(float);
 
@@ -176,7 +187,9 @@ class Net {
 
     std::variant<EmptyRct, Rct> _rct;
 
-    std::optional<spef::Net> _spef_net;
+    // Pending imports are immutable and short-lived. Keep their payload out
+    // of every timing net once it has been materialized into an RC tree.
+    std::shared_ptr<const spef::Net> _spef_net;
 
     bool _rc_timing_updated {false};
     RcModel _rc_model{RcModel::effective_capacitance};
