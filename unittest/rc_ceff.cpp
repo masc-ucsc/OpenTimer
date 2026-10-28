@@ -100,6 +100,39 @@ TEST(RcCeff, CrossingHandlesExtremeTimeConstantRatios) {
             }
 }
 
+TEST(RcCeff, BatchedThresholdsMatchIndependentWaveforms) {
+  // Unsorted, repeated and falling-edge thresholds must have independent
+  // search brackets even though they share waveform preparation.
+  const std::array<double, 5> voltages{.5, .9, .1, .5, .01};
+  for (double scale : {1e-6, 1., 1e6})
+    for (double fast : {0., .001, .99999, 1.})
+      for (double duration : {0., .01, 1., 100.})
+        for (double wire : {0., .001, .99999, 1., 100.})
+          for (double weight : {0., .2, 1.}) {
+            ot::RcDriver d;
+            d.slow = scale;
+            d.fast = fast * scale;
+            d.duration = duration * scale;
+            d.slow_weight = weight;
+            const auto crossings = d.crossings(voltages, wire * scale);
+            for (size_t i = 0; i < voltages.size(); ++i) {
+              const auto v = voltages[i];
+              if (v <=
+                  d.voltage(std::numeric_limits<double>::min(), wire * scale)) {
+                EXPECT_EQ(crossings[i], 0);
+                continue;
+              }
+              const auto reference = reference_crossing(d, v, wire * scale);
+              EXPECT_NEAR(crossings[i], reference, 2e-8 * reference);
+              EXPECT_NEAR(d.voltage(crossings[i], wire * scale), v, 2e-9);
+            }
+            EXPECT_EQ(crossings[0], crossings[3]);
+          }
+  ot::RcDriver zero;
+  for (const auto crossing : zero.crossings(voltages))
+    EXPECT_EQ(crossing, 0);
+}
+
 TEST(RcCeff, RampCrossingsRemainAccurateAcrossScales) {
   for (double tau : {1e-6, 1., 1e6})
     for (double ratio : {1e-6, 1e-3, .1, 1., 2., 10., 1e3, 1e6})

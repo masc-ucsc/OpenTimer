@@ -506,8 +506,9 @@ std::optional<RcResponse> Net::_response(Split m, Tran t, float si, Pin& to) con
     const auto& sink = to.thresholds(m);
     const auto progress = [t](double v) { return t == RISE ? v : 1-v; };
     const double low = progress(sink.lower[t]), high = progress(sink.upper[t]);
-    const double delay = driver->crossing(progress(sink.input[t]), *tau) - driver->logic_time;
-    const double slew = std::abs(driver->crossing(high, *tau) - driver->crossing(low, *tau)) / sink.derate;
+    const auto crossings = driver->crossings<3>({progress(sink.input[t]), high, low}, *tau);
+    const double delay = crossings[0] - driver->logic_time;
+    const double slew = std::abs(crossings[1] - crossings[2]) / sink.derate;
     return RcResponse{float(delay), float(slew)};
   }
   return rc_wire_response(*tau, si, _root->thresholds(m), to.thresholds(m), t);

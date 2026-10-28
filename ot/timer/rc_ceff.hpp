@@ -58,17 +58,20 @@ struct RcDriver {
            (1 - slow_weight) * rc_cascade_voltage(t, fast, wire_tau, duration);
   }
   double crossing(double v, double wire_tau = 0) const {
-    if (duration <= 0 && wire_tau <= 0) {
-      const double jump =
-          (slow <= 0 ? slow_weight : 0) + (fast <= 0 ? 1 - slow_weight : 0);
-      if (v <= jump)
-        return 0;
-    }
-    double lo = 0, hi = duration;
-    if (hi <= 0)
-      hi = std::max({slow, fast, wire_tau});
-    if (hi <= 0)
-      return 0;
+    return crossings<1>({v}, wire_tau)[0];
+  }
+  // Arrival and slew query one waveform at several thresholds. Prepare its
+  // poles and initial bracket sample once; each threshold retains its own
+  // safeguarded solve, without ordering assumptions or shared iteration state.
+  template <size_t N>
+  std::array<double, N> crossings(const std::array<double, N> &voltages,
+                                  double wire_tau = 0) const {
+    std::array<double, N> result{};
+    double initial_hi = duration;
+    if (initial_hi <= 0)
+      initial_hi = std::max({slow, fast, wire_tau});
+    if (initial_hi <= 0)
+      return result;
     // The tail coefficient depends only on the pole and ramp duration.
     // Reuse it across the bracket search and Newton/bisection evaluations.
     const auto tail = [this](double tau) {
@@ -143,38 +146,51 @@ struct RcDriver {
       return {slow_weight * a.voltage + (1 - slow_weight) * b.voltage,
               slow_weight * a.slope + (1 - slow_weight) * b.slope};
     };
-    // The successful bracket sample is also the validity check below. Retain
-    // it rather than evaluating both pole responses again at the same time.
-    double high_voltage = sample(hi).voltage;
-    for (int k = 0; k < 128 && high_voltage < v; ++k) {
-      hi *= 2;
-      high_voltage = sample(hi).voltage;
-    }
-    if (!std::isfinite(hi) || high_voltage < v)
-      return std::numeric_limits<double>::infinity();
-    // Solve the same monotone waveform, retaining the bracket whenever a
-    // Newton step is unsafe. Time-relative tolerance is much finer than the
-    // float timing values returned by the engine and is invariant to units.
-    double x = (lo + hi) * .5;
-    for (int k = 0; k < 48; ++k) {
-      const auto value = sample(x);
-      const double error = value.voltage - v;
-      if (error < 0)
-        lo = x;
-      else
-        hi = x;
-      const double tolerance = 1e-10 * std::max(x, 1e-300);
-      const double correction = value.slope > 0
-                                    ? error / value.slope
-                                    : std::numeric_limits<double>::infinity();
-      if (std::abs(correction) <= tolerance)
-        return x;
-      if (hi - lo <= tolerance)
-        break;
-      const double next = x - correction;
-      x = next > lo && next < hi ? next : (lo + hi) * .5;
-    }
-    return (lo + hi) * .5;
+    const double initial_voltage = sample(initial_hi).voltage;
+    const auto solve = [&](double v) {
+      if (duration <= 0 && wire_tau <= 0) {
+        const double jump =
+            (slow <= 0 ? slow_weight : 0) + (fast <= 0 ? 1 - slow_weight : 0);
+        if (v <= jump)
+          return 0.;
+      }
+      double lo = 0, hi = initial_hi;
+      // The successful bracket sample is also the validity check below. Retain
+      // it rather than evaluating both pole responses again at the same time.
+      double high_voltage = initial_voltage;
+      for (int k = 0; k < 128 && high_voltage < v; ++k) {
+        hi *= 2;
+        high_voltage = sample(hi).voltage;
+      }
+      if (!std::isfinite(hi) || high_voltage < v)
+        return std::numeric_limits<double>::infinity();
+      // Solve the same monotone waveform, retaining the bracket whenever a
+      // Newton step is unsafe. Time-relative tolerance is much finer than the
+      // float timing values returned by the engine and is invariant to units.
+      double x = (lo + hi) * .5;
+      for (int k = 0; k < 48; ++k) {
+        const auto value = sample(x);
+        const double error = value.voltage - v;
+        if (error < 0)
+          lo = x;
+        else
+          hi = x;
+        const double tolerance = 1e-10 * std::max(x, 1e-300);
+        const double correction = value.slope > 0
+                                      ? error / value.slope
+                                      : std::numeric_limits<double>::infinity();
+        if (std::abs(correction) <= tolerance)
+          return x;
+        if (hi - lo <= tolerance)
+          break;
+        const double next = x - correction;
+        x = next > lo && next < hi ? next : (lo + hi) * .5;
+      }
+      return (lo + hi) * .5;
+    };
+    for (size_t i = 0; i < N; ++i)
+      result[i] = solve(voltages[i]);
+    return result;
   }
 };
 
@@ -369,8 +385,9 @@ std::optional<RcGateResult> rc_effective_gate(const RcPi &pi,
   if (!best || std::abs(best->error) > 1e-3)
     return {};
   auto d = best->driver;
-  d.logic_time = d.crossing(logic);
-  d.slew = (d.crossing(high) - d.crossing(low)) / thresholds.derate;
+  const auto crossings = d.crossings(std::array<double, 3>{logic, high, low});
+  d.logic_time = crossings[0];
+  d.slew = (crossings[1] - crossings[2]) / thresholds.derate;
   if (!(std::isfinite(d.slew) && d.slew > 0))
     return {};
   return RcGateResult{float(best->cap), float(best->delay), float(d.slew), d};
