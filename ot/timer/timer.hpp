@@ -63,6 +63,8 @@ class Timer {
     // Ground capacitors only. Like the SPEF overload, batches materialize RC
     // immediately but preserve frontiers for one later timing propagation.
     void update_parasitics(std::vector<IndexedRc>, farad_t, ohm_t);
+    // Dense placement RC, with no retained node labels or per-arc name lookup.
+    void update_bound_parasitics(std::vector<BoundRc>, farad_t, ohm_t);
     Timer& read_sdc(std::filesystem::path);
     Timer& read_timing(std::filesystem::path);
     // Explicit analysis annotation. Existing create_clock behavior is unchanged.

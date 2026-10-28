@@ -29,6 +29,21 @@ struct IndexedRc {
   std::vector<Edge> edges;
 };
 
+// Placement-owned RC with numeric pin identity. no_pin denotes an internal
+// Steiner node. Pin indices must come from this timer's current netlist; any
+// topology edit requires rebuilding the bindings. Internal nodes have no
+// authored names; exports generate names only when requested.
+struct BoundRc {
+  static constexpr size_t no_pin = std::numeric_limits<size_t>::max();
+  struct Node {
+    size_t pin;
+    float capacitance;
+  };
+  size_t driver;
+  std::vector<Node> nodes;
+  std::vector<IndexedRc::Edge> edges;
+};
+
 // Forward declaration
 class RctEdge;
 class RctNode;
@@ -131,13 +146,57 @@ class Rct {
     inline size_t num_edges() const;
     
     const RctNode* node(const std::string&) const;
+    // Numeric access is available for the bound placement representation.
+    const RctNode *indexed_node(size_t) const;
 
   private:
 
     RctNode* _root {nullptr};
     TimingData<RcPi, MAX_SPLIT, MAX_TRAN> _pi;
 
-    std::unordered_map<std::string, RctNode> _nodes;
+    using NamedNodes = std::unordered_map<std::string, RctNode>;
+    struct BoundNodes {
+      std::vector<RctNode> values;
+      Pin *driver;
+      BoundNodes(size_t count, Pin *pin) : values(count), driver(pin) {}
+      size_t size() const { return values.size(); }
+      auto begin() { return values.begin(); }
+      auto end() { return values.end(); }
+      auto begin() const { return values.begin(); }
+      auto end() const { return values.end(); }
+      auto &operator[](size_t i) { return values[i]; }
+      const auto &operator[](size_t i) const { return values[i]; }
+    };
+    std::variant<NamedNodes, BoundNodes> _nodes;
+
+    template <class F> void _each_node(F &&f) {
+      std::visit(
+          [&](auto &nodes) {
+            for (auto &entry : nodes) {
+              if constexpr (std::is_same_v<std::decay_t<decltype(nodes)>,
+                                           NamedNodes>)
+                f(entry.second);
+              else
+                f(entry);
+            }
+          },
+          _nodes);
+    }
+    template <class F> void _each_node(F &&f) const {
+      std::visit(
+          [&](const auto &nodes) {
+            for (const auto &entry : nodes) {
+              if constexpr (std::is_same_v<std::decay_t<decltype(nodes)>,
+                                           NamedNodes>)
+                f(entry.second);
+              else
+                f(entry);
+            }
+          },
+          _nodes);
+    }
+    std::vector<std::pair<const RctNode *, std::string>>
+    _node_names(const std::string &) const;
     std::vector<RctEdge> _edges;
 
     // Moments are needed only while updating one tree. Do not retain them
@@ -160,7 +219,7 @@ class Rct {
 
 // Function: num_nodes
 inline size_t Rct::num_nodes() const {
-  return _nodes.size();
+  return std::visit([](const auto &nodes) { return nodes.size(); }, _nodes);
 }
 
 // Function: num_edges
@@ -224,6 +283,7 @@ class Net {
     void _update_rc_timing();
     void _attach(spef::Net&&);
     void _attach(IndexedRc &&);
+    void _attach(const BoundRc &, const std::vector<Pin *> &);
     void _make_rct();
     //void _make_rct(const spef::Net&);
     void _insert_pin(Pin&);

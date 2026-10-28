@@ -281,6 +281,135 @@ TEST_F(RcPropagation, IndexedNetworksMatchNamedRcAcrossUnitsAndReplacements) {
   EXPECT_EQ(timer.pins().at("y").at(ot::MAX, ot::RISE), before);
 }
 
+TEST_F(RcPropagation, BoundRcMatchesNamedTreesAcrossReplacementAndCornerLoads) {
+  timer.set_resistance_unit(ot::ohm_t(1000));
+  const std::string extra =
+      "a:__ot_rc_1"; // Exercise export-name collision handling.
+  timer.insert_primary_output(extra).disconnect_pin(extra).connect_pin(extra,
+                                                                       "a");
+  transition(20);
+  timer.update_netlist();
+  const auto driver = timer.pins().at("a").idx();
+  for (unsigned workers : {1U, 3U}) {
+    timer.set_num_threads(workers);
+    for (auto model :
+         {ot::RcModel::elmore, ot::RcModel::effective_capacitance}) {
+      timer.set_rc_model(model);
+      for (size_t count : {40U, 3U}) {
+        for (auto split : {ot::MIN, ot::MAX})
+          for (auto tran : {ot::RISE, ot::FALL}) {
+            timer.set_load("y", split, tran, 2 + split + 3 * tran);
+            timer.set_load(extra, split, tran, 7 + 2 * split + tran);
+          }
+        ot::IndexedRc named;
+        named.name = "a";
+        named.nodes.push_back({"a", 1});
+        for (size_t i = 1; i < count; ++i) {
+          named.nodes.push_back(
+              {i == count - 1 ? "y" : "internal_" + std::to_string(i),
+               float(i)});
+          named.edges.push_back({i - 1, i, float(i + 1)});
+        }
+        named.nodes.push_back({extra, 3});
+        named.edges.push_back({1, count, 2});
+        timer.update_parasitics({named}, ot::farad_t(1e-15), ot::ohm_t(1000));
+        timer.update_timing();
+        std::vector<std::optional<float>> expected;
+        for (const auto &name : {std::string("y"), extra})
+          for (auto split : {ot::MIN, ot::MAX})
+            for (auto tran : {ot::RISE, ot::FALL}) {
+              expected.push_back(timer.pins().at(name).at(split, tran));
+              expected.push_back(timer.pins().at(name).slew(split, tran));
+            }
+        ot::BoundRc bound;
+        bound.driver = driver;
+        for (const auto &node : named.nodes) {
+          const auto pin = timer.pins().find(node.name);
+          bound.nodes.push_back({pin == timer.pins().end() ? ot::BoundRc::no_pin
+                                                           : pin->second.idx(),
+                                 node.capacitance / 1000});
+        }
+        bound.edges = named.edges;
+        for (auto &edge : bound.edges)
+          edge.resistance *= 1000;
+        timer.update_bound_parasitics({bound}, ot::farad_t(1e-12),
+                                      ot::ohm_t(1));
+        timer.update_timing();
+        size_t index = 0;
+        for (const auto &name : {std::string("y"), extra})
+          for (auto split : {ot::MIN, ot::MAX})
+            for (auto tran : {ot::RISE, ot::FALL}) {
+              ASSERT_TRUE(expected[index]);
+              EXPECT_FLOAT_EQ(*timer.pins().at(name).at(split, tran),
+                              *expected[index++]);
+              ASSERT_TRUE(expected[index]);
+              EXPECT_FLOAT_EQ(*timer.pins().at(name).slew(split, tran),
+                              *expected[index++]);
+            }
+        const auto *tree = timer.pins().at("a").net()->rct();
+        ASSERT_NE(tree, nullptr);
+        EXPECT_EQ(tree->num_nodes(), count + 1);
+        EXPECT_EQ(tree->node("a"), tree->indexed_node(0));
+        EXPECT_EQ(tree->node("y"), tree->indexed_node(count - 1));
+        EXPECT_EQ(tree->indexed_node(count + 1), nullptr);
+        EXPECT_EQ(tree->node("internal_1"), nullptr);
+        std::ostringstream exported;
+        timer.dump_spef(exported);
+        EXPECT_NE(exported.str().find("a a:__ot_rc_1_ 2\n"), std::string::npos);
+        EXPECT_NE(exported.str().find("a:__ot_rc_1_ a:__ot_rc_1 2\n"),
+                  std::string::npos);
+      }
+    }
+  }
+  // Connectivity edits destroy dense RC before any borrowed pin can disappear.
+  timer.disconnect_pin("y").connect_pin("y", "a").update_timing();
+  EXPECT_EQ(timer.pins().at("a").net()->rct(), nullptr);
+}
+
+TEST_F(RcPropagation, InvalidBoundBatchPreservesPreviouslyInstalledRc) {
+  timer.update_netlist();
+  const auto a = timer.pins().at("a").idx(), y = timer.pins().at("y").idx();
+  ot::BoundRc valid{
+      a, {{a, 2}, {ot::BoundRc::no_pin, 1}, {y, 7}}, {{0, 1, 10}, {1, 2, 20}}};
+  transition(20);
+  timer.update_bound_parasitics({valid}, ot::farad_t(1e-15), ot::ohm_t(1));
+  timer.update_timing();
+  const auto before = timer.report_at("y", ot::MAX, ot::RISE);
+  auto changed = valid;
+  changed.edges[0].resistance *= 100;
+  for (int fault = 0; fault < 7; ++fault) {
+    auto invalid = valid;
+    switch (fault) {
+    case 0:
+      invalid.nodes[1].pin = y;
+      break;
+    case 1:
+      invalid.nodes[2].pin = ot::BoundRc::no_pin;
+      break;
+    case 2:
+      invalid.edges[1] = {1, 0, 20};
+      break;
+    case 3:
+      invalid.edges[1].to = 3;
+      break;
+    case 4:
+      invalid.nodes[1].capacitance = -1;
+      break;
+    case 5:
+      invalid.edges[0].resistance = std::numeric_limits<float>::infinity();
+      break;
+    case 6:
+      invalid.driver = ot::BoundRc::no_pin;
+      break;
+    }
+    EXPECT_THROW(timer.update_bound_parasitics(
+                     {changed, invalid}, ot::farad_t(1e-15), ot::ohm_t(1)),
+                 std::exception);
+    timer.update_timing();
+    EXPECT_EQ(timer.report_at("y", ot::MAX, ot::RISE), before);
+  }
+}
+
 TEST_F(RcPropagation, RcLabelsSurviveRehashAndIncrementalReplacement) {
   constexpr int segments = 40;
   // RC products use the timer units: kOhm * fF = ps.

@@ -1,6 +1,8 @@
 #ifndef OT_TIMER_PIN_HPP_
 #define OT_TIMER_PIN_HPP_
 
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <ot/liberty/celllib.hpp>
 #include <ot/timer/arc_list.hpp>
@@ -208,6 +210,7 @@ class Pin {
     std::unique_ptr<std::string> _owned_name;
     const std::string* _name_ref;
     std::array<const SlewThresholds*, 2> _default_thresholds {nullptr, nullptr};
+    uint32_t _rc_index{std::numeric_limits<uint32_t>::max()};
     bool _ideal_clock {false};
     Clock* _ideal_clock_source {nullptr};
     // Ideal clock reaching this clock sink (the fastest one when several do);
