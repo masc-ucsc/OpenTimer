@@ -2,6 +2,7 @@
 #define OT_TIMER_PIN_HPP_
 
 #include <ot/liberty/celllib.hpp>
+#include <ot/timer/arc_list.hpp>
 
 namespace ot {
 
@@ -212,8 +213,8 @@ class Pin {
 
     std::variant<PrimaryInput*, PrimaryOutput*, CellpinView> _handle;
 
-    std::list<Arc*> _fanout;
-    std::list<Arc*> _fanin;
+    detail::Arc_list _fanout;
+    detail::Arc_list _fanin;
     std::list<Test*> _tests;
 
     std::optional<std::list<Pin*>::iterator> _frontier_satellite;

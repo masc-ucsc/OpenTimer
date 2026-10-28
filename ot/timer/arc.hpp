@@ -1,8 +1,9 @@
 #ifndef OT_TIMER_ARC_HPP_
 #define OT_TIMER_ARC_HPP_
 
-#include <ot/traits.hpp>
 #include <ot/liberty/celllib.hpp>
+#include <ot/timer/arc_list.hpp>
+#include <ot/traits.hpp>
 
 namespace ot {
 
@@ -61,9 +62,9 @@ class Arc {
     std::variant<Net*, TimingView> _handle;
 
     std::optional<std::list<Arc>::iterator> _satellite;
-    std::optional<std::list<Arc*>::iterator> _fanout_satellite;
-    std::optional<std::list<Arc*>::iterator> _fanin_satellite;
-    
+    detail::Arc_link _fanout_link;
+    detail::Arc_link _fanin_link;
+
     TimingData<std::optional<float>, MAX_SPLIT, MAX_TRAN, MAX_TRAN> _delay;
     TimingData<float, MAX_SPLIT, MAX_TRAN, MAX_TRAN> _effective_load {};
 

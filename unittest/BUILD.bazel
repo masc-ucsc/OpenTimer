@@ -39,6 +39,15 @@ cc_test(
 )
 
 cc_test(
+    name = "arc_adjacency",
+    size = "small",
+    timeout = "short",
+    srcs = ["arc_adjacency.cpp"],
+    visibility = ["//visibility:public"],
+    deps = ["//:opentimer", "@googletest//:gtest_main"],
+)
+
+cc_test(
     name = "path_report",
     size = "small",
     timeout = "short",

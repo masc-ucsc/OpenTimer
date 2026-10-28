@@ -208,27 +208,25 @@ bool Pin::is_datapath_source() const {
 // Insert an arc into the fanin list of the pin.
 void Pin::_insert_fanin(Arc& arc) {
   assert(&arc._to == this);
-  arc._fanin_satellite = _fanin.insert(_fanin.end(), &arc);
+  _fanin.push_back(arc._fanin_link, arc);
 }
 
 // Procedure: _insert_fanout
 void Pin::_insert_fanout(Arc& arc) {
   assert(&arc._from == this);
-  arc._fanout_satellite = _fanout.insert(_fanout.end(), &arc);
+  _fanout.push_back(arc._fanout_link, arc);
 }
 
 // Procedure: _remove_fanout
 void Pin::_remove_fanout(Arc& arc) {
-  assert(arc._fanout_satellite && &arc._from == this);
-  _fanout.erase(*(arc._fanout_satellite));
-  arc._fanout_satellite.reset();
+  assert(&arc._from == this);
+  _fanout.erase(arc._fanout_link);
 }
 
 // Procedure: _remove_fanin
 void Pin::_remove_fanin(Arc& arc) {
-  assert(arc._fanin_satellite && &arc._to == this);
-  _fanin.erase(*(arc._fanin_satellite));
-  arc._fanin_satellite.reset();
+  assert(&arc._to == this);
+  _fanin.erase(arc._fanin_link);
 }
 
 // Function: _find_fanin
