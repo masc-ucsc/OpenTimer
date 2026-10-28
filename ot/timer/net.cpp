@@ -84,11 +84,16 @@ void Rct::insert_node(const std::string& name, float cap) {
 // Procedure: insert_edge
 void Rct::insert_edge(const std::string& from, const std::string& to, float res) {
 
+  auto &tail = _insert_node(from);
+  auto &head = _insert_node(to);
+  _insert_edge(tail, head, res);
+}
+
+void Rct::_insert_edge(RctNode &tail, RctNode &head, float res) {
+
   if (_edges.size() >= RctNode::no_edge) {
     OT_THROW(Error::RCT, "too many RC edges");
   }
-  auto &tail = _insert_node(from);
-  auto &head = _insert_node(to);
   const auto index = static_cast<uint32_t>(_edges.size());
   _edges.emplace_back(tail, head, res);
   if (tail._last_fanout == RctNode::no_edge) {
@@ -98,7 +103,7 @@ void Rct::insert_edge(const std::string& from, const std::string& to, float res)
   }
   tail._last_fanout = index;
 }
- 
+
 // Function: insert_segment
 void Rct::insert_segment(const std::string& name1, const std::string& name2, float res) {
   insert_edge(name1, name2, res);
@@ -281,6 +286,27 @@ Net::Net(const std::string& name) :
 void Net::_attach(spef::Net&& spef_net) {
   assert(spef_net.name == _name && _root);
   _spef_net = std::make_shared<const spef::Net>(std::move(spef_net));
+  _rc_timing_updated = false;
+}
+
+void Net::_attach(IndexedRc &&network) {
+  assert(network.name == _name && _root);
+  _spef_net.reset();
+  auto &rct = _rct.emplace<Rct>();
+  rct._edges.reserve(2 * network.edges.size());
+  std::vector<RctNode *> nodes;
+  nodes.reserve(network.nodes.size());
+  // Keep the same node insertion and bidirectional edge order as SPEF. This
+  // preserves traversal and floating-point reduction order exactly.
+  for (const auto &node : network.nodes) {
+    auto &stored = rct._insert_node(node.name);
+    stored._ncap = node.capacitance;
+    nodes.push_back(&stored);
+  }
+  for (const auto &edge : network.edges) {
+    rct._insert_edge(*nodes[edge.from], *nodes[edge.to], edge.resistance);
+    rct._insert_edge(*nodes[edge.to], *nodes[edge.from], edge.resistance);
+  }
   _rc_timing_updated = false;
 }
 

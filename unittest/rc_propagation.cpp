@@ -217,6 +217,70 @@ TEST_F(RcPropagation, QueuedTemporaryParasiticsKeepTheLatestReplacement) {
       timer.pins().at("a").net()->rct()->delay("y", ot::MAX, ot::RISE), 8);
 }
 
+TEST_F(RcPropagation, IndexedNetworksMatchNamedRcAcrossUnitsAndReplacements) {
+  timer.set_resistance_unit(ot::ohm_t(1000));
+  transition(20);
+  for (auto model : {ot::RcModel::elmore, ot::RcModel::effective_capacitance}) {
+    timer.set_rc_model(model);
+    for (bool scaled : {false, true, false}) {
+      ot::IndexedRc indexed;
+      indexed.name = "a";
+      for (size_t i = 0; i < 42; ++i) {
+        indexed.nodes.push_back({i == 0    ? "a"
+                                 : i == 41 ? "y"
+                                           : "branch_" + std::to_string(i),
+                                 float(i + 1) * .025f});
+        if (i)
+          indexed.edges.push_back({i - 1, i, float(i + 1) * .37f});
+      }
+      spef::Spef named;
+      named.capacitance_unit = scaled ? "1 PF" : "1 FF";
+      named.resistance_unit = scaled ? "1 KOHM" : "1 OHM";
+      spef::Net net("a", 0);
+      for (const auto &node : indexed.nodes) {
+        net.caps.emplace_back(node.name, "", node.capacitance);
+      }
+      for (const auto &edge : indexed.edges) {
+        net.ress.emplace_back(indexed.nodes[edge.from].name,
+                              indexed.nodes[edge.to].name, edge.resistance);
+      }
+      named.nets.push_back(std::move(net));
+      timer.update_parasitics(std::move(named));
+      timer.update_timing();
+      const auto &sink = timer.pins().at("y");
+      std::vector<std::optional<float>> expected;
+      for (auto split : {ot::MIN, ot::MAX}) {
+        for (auto tran : {ot::RISE, ot::FALL}) {
+          expected.push_back(sink.at(split, tran));
+          expected.push_back(sink.slew(split, tran));
+        }
+      }
+      const auto before = sink.at(ot::MAX, ot::RISE);
+      timer.update_parasitics({std::move(indexed)},
+                              ot::farad_t(scaled ? 1e-12 : 1e-15),
+                              ot::ohm_t(scaled ? 1000 : 1));
+      EXPECT_EQ(sink.at(ot::MAX, ot::RISE), before);
+      timer.update_timing();
+      size_t i = 0;
+      for (auto split : {ot::MIN, ot::MAX}) {
+        for (auto tran : {ot::RISE, ot::FALL}) {
+          EXPECT_EQ(sink.at(split, tran), expected[i++]);
+          EXPECT_EQ(sink.slew(split, tran), expected[i++]);
+        }
+      }
+    }
+  }
+  const auto before = timer.pins().at("y").at(ot::MAX, ot::RISE);
+  ot::IndexedRc invalid{"a", {{"a", 1}}, {{0, 1, 2}}};
+  EXPECT_THROW(
+      timer.update_parasitics({invalid}, ot::farad_t(1e-15), ot::ohm_t(1)),
+      std::exception);
+  EXPECT_THROW(timer.update_parasitics({}, ot::farad_t(0), ot::ohm_t(1)),
+               std::exception);
+  timer.update_timing();
+  EXPECT_EQ(timer.pins().at("y").at(ot::MAX, ot::RISE), before);
+}
+
 TEST_F(RcPropagation, RcLabelsSurviveRehashAndIncrementalReplacement) {
   constexpr int segments = 40;
   // RC products use the timer units: kOhm * fF = ps.

@@ -13,6 +13,22 @@ namespace ot {
 
 enum class RcModel { effective_capacitance, elmore };
 
+// In-memory ground-capacitance network. Segment endpoints index nodes in
+// their authored order; no SPEF endpoint names or name-map expansion is needed.
+struct IndexedRc {
+  struct Node {
+    std::string name;
+    float capacitance;
+  };
+  struct Edge {
+    size_t from, to;
+    float resistance;
+  };
+  std::string name;
+  std::vector<Node> nodes;
+  std::vector<Edge> edges;
+};
+
 // Forward declaration
 class RctEdge;
 class RctNode;
@@ -131,6 +147,7 @@ class Rct {
       TimingData<float, MAX_TRAN, MAX_SPLIT> ldelay{};
     };
     RctNode &_insert_node(const std::string &);
+    void _insert_edge(RctNode &, RctNode &, float);
     void _update_load(RctNode*, RctNode*);
     void _update_delay(RctNode*, RctNode*);
     void _update_ldelay(RctNode *, RctNode *, std::vector<Moments> &);
@@ -206,6 +223,7 @@ class Net {
     
     void _update_rc_timing();
     void _attach(spef::Net&&);
+    void _attach(IndexedRc &&);
     void _make_rct();
     //void _make_rct(const spef::Net&);
     void _insert_pin(Pin&);

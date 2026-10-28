@@ -44,6 +44,51 @@ void Timer::update_parasitics(spef::Spef value) {
   _remove_state(EPTS_UPDATED | AREA_UPDATED | POWER_UPDATED);
 }
 
+void Timer::update_parasitics(std::vector<IndexedRc> networks,
+                              farad_t capacitance_unit, ohm_t resistance_unit) {
+  if (!std::isfinite(capacitance_unit.value()) ||
+      capacitance_unit.value() <= 0 ||
+      !std::isfinite(resistance_unit.value()) || resistance_unit.value() <= 0) {
+    OT_THROW(Error::RCT, "indexed RC units must be finite and positive");
+  }
+  // Reject malformed indices before changing any installed RC or units.
+  for (const auto &net : networks) {
+    for (const auto &edge : net.edges) {
+      if (edge.from >= net.nodes.size() || edge.to >= net.nodes.size()) {
+        OT_THROW(Error::RCT,
+                 "indexed RC endpoint outside node array: ", net.name);
+      }
+    }
+  }
+  std::scoped_lock lock(_mutex);
+  _update_netlist();
+  if (!_capacitance_unit)
+    _capacitance_unit = capacitance_unit;
+  if (!_resistance_unit)
+    _resistance_unit = resistance_unit;
+  const float cap_scale = (capacitance_unit / *_capacitance_unit).value();
+  const float res_scale = (resistance_unit / *_resistance_unit).value();
+  for (auto &network : networks) {
+    const auto found = _nets.find(network.name);
+    if (found == _nets.end()) {
+      OT_LOGW("indexed RC net ", network.name, " not found");
+      continue;
+    }
+    // Match _rebase_unit(Spef&) including its unit-equivalence tolerance.
+    if (std::fabs(cap_scale - 1.0f) >= 1e-2f) {
+      for (auto &node : network.nodes)
+        node.capacitance *= cap_scale;
+    }
+    if (std::fabs(res_scale - 1.0f) >= 1e-2f) {
+      for (auto &edge : network.edges)
+        edge.resistance *= res_scale;
+    }
+    found->second._attach(std::move(network));
+    _insert_frontier(*found->second._root);
+  }
+  _remove_state(EPTS_UPDATED | AREA_UPDATED | POWER_UPDATED);
+}
+
 // Procedure: _read_spef
 void Timer::_read_spef(spef::Spef &spef, bool materialize) {
   for(auto& spef_net : spef.nets) {

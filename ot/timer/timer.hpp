@@ -59,6 +59,10 @@ class Timer {
     // retaining timing frontiers for one later propagation across all batches.
     // Unlike read_parasitics, no SPEF payload survives this call.
     void update_parasitics(spef::Spef);
+    // Indexed in-memory equivalent; units describe the float payload values.
+    // Ground capacitors only. Like the SPEF overload, batches materialize RC
+    // immediately but preserve frontiers for one later timing propagation.
+    void update_parasitics(std::vector<IndexedRc>, farad_t, ohm_t);
     Timer& read_sdc(std::filesystem::path);
     Timer& read_timing(std::filesystem::path);
     // Explicit analysis annotation. Existing create_clock behavior is unchanged.
