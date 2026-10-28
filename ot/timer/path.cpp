@@ -510,7 +510,7 @@ void Timer::_recover_datapath(Path& path, const SfxtCache& sfxt) const {
     u = *sfxt.__tree[u];
     std::tie(upin, urf) = _decode_pin(u);
     assert(path.back().transition == frf && urf == trf);
-    auto at = path.back().at + *arc->_delay[sfxt._el][frf][trf];
+    auto at = path.back().at + *arc->delay(sfxt._el, frf, trf);
     // Arc internal power is not computed. Preserve the reported zero without
     // reserving an unused per-corner/transition power array on every arc.
     path.emplace_back(*upin, urf, at, 0.0f);
@@ -540,7 +540,8 @@ void Timer::_recover_datapath(
   // internal deviation
   else {
     assert(!path.empty());
-    auto at = path.back().at + *node->arc->_delay[sfxt._el][path.back().transition][urf];
+    auto at = path.back().at +
+              *node->arc->delay(sfxt._el, path.back().transition, urf);
     path.emplace_back(*upin, urf, at, 0.0f);
   }
 
@@ -550,7 +551,7 @@ void Timer::_recover_datapath(
     u = *sfxt.__tree[u];   
     std::tie(upin, urf) = _decode_pin(u);
     assert(path.back().transition == frf && urf == trf);
-    auto at = path.back().at + *arc->_delay[sfxt._el][frf][trf]; 
+    auto at = path.back().at + *arc->delay(sfxt._el, frf, trf);
     path.emplace_back(*upin, urf, at, 0.0f);
   }
 

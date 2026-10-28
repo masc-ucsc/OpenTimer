@@ -32,7 +32,9 @@ class Arc {
     std::string name() const;
 
     std::optional<float> delay(Split split, Tran from, Tran to) const {
-      return _delay[split][from][to];
+      return (_delay_valid & (1U << (4 * split + 2 * from + to)))
+                 ? std::optional<float>(_delay_values[split][from][to])
+                 : std::nullopt;
     }
 
     bool is_cell_arc() const;
@@ -58,6 +60,7 @@ class Arc {
 
     int _state {0};
     std::uint8_t _case_mask {15};
+    std::uint8_t _delay_valid{0};
 
     std::variant<Net*, TimingView> _handle;
 
@@ -65,14 +68,26 @@ class Arc {
     detail::Arc_link _fanout_link;
     detail::Arc_link _fanin_link;
 
-    TimingData<std::optional<float>, MAX_SPLIT, MAX_TRAN, MAX_TRAN> _delay;
-    TimingData<float, MAX_SPLIT, MAX_TRAN, MAX_TRAN> _effective_load {};
+    // Keep engagement independent of all float representations. Effective loads
+    // are consumed while propagating each arc, rather than retained per arc.
+    TimingData<float, MAX_SPLIT, MAX_TRAN, MAX_TRAN> _delay_values{};
+
+    void _set_delay(Split split, Tran from, Tran to,
+                    std::optional<float> value) {
+      const auto bit = 1U << (4 * split + 2 * from + to);
+      if (value) {
+        _delay_values[split][from][to] = *value;
+        _delay_valid |= bit;
+      } else {
+        _delay_valid &= ~bit;
+      }
+    }
 
     void _remap_timing(Split, const Timing&);
     void _fprop_slew();
     void _fprop_at();
     void _reset_delay();
-    void _fprop_delay(bool net_delay_ready);
+    void _fprop_delay(bool delay_ready);
     void _bprop_rat();
     void _insert_state(int);
     void _remove_state(int = 0);

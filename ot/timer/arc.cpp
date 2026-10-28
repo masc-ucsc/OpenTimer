@@ -73,11 +73,7 @@ void Arc::_remap_timing(Split el, const Timing& timing) {
 }
 
 // Procedure: _reset_delay
-void Arc::_reset_delay() {
-  FOR_EACH_EL_RF_RF(el, frf, trf) {
-    _delay[el][frf][trf].reset();
-  }
-}
+void Arc::_reset_delay() { _delay_valid = 0; }
 
 // Procedure: _fprop_slew
 void Arc::_fprop_slew() {
@@ -95,7 +91,7 @@ void Arc::_fprop_slew() {
         // transition is available, without inventing a propagated slew.
         const float slew = _from._slew[el][rf] ? float(*_from._slew[el][rf]) : 0.0f;
         if(auto response = net->_response(el, rf, slew, _to)) {
-          _delay[el][rf][rf] = response->delay;
+          _set_delay(el, rf, rf, response->delay);
           if(_from._slew[el][rf]) {
             _to._relax_slew(this, el, rf, el, rf, response->slew);
           }
@@ -106,12 +102,15 @@ void Arc::_fprop_slew() {
     [this] (TimingView tv) {
       FOR_EACH_EL_RF_RF_IF(el, frf, trf, (tv[el] && _from._slew[el][frf] && (_case_mask & (1U << (2 * frf + trf))))) {
         auto lc = (_to._net) ? _to._net->_load(el, trf) : 0.0f;
-        _effective_load[el][frf][trf] = lc;
         const auto model = _to._net ? _to._net->_gate_response(*tv[el], el, frf, trf, *_from._slew[el][frf])
                                     : std::nullopt;
         const auto so = model ? std::optional<float>(model->slew)
                               : tv[el]->slew(frf, trf, *_from._slew[el][frf], lc);
-        if (model) _effective_load[el][frf][trf] = model->capacitance;
+        // Delay uses this arc's effective load, independent of which fanin
+        // wins the output slew. Consume it before discarding the local fit.
+        _set_delay(el, frf, trf,
+                   tv[el]->delay(frf, trf, *_from._slew[el][frf],
+                                 model ? model->capacitance : lc));
         if(so) {
           _to._relax_slew(this, el, frf, el, trf, *so);
           if (_to._net && _to._slew[el][trf] && _to._slew[el][trf]->pi_arc == this
@@ -127,35 +126,40 @@ void Arc::_fprop_slew() {
 }
 
 // Procedure: _fprop_delay
-void Arc::_fprop_delay(bool net_delay_ready) {
-  
-  if(_has_state(LOOP_BREAKER) || _case_mask == 0) {
+void Arc::_fprop_delay(bool delay_ready) {
+
+  if (delay_ready || _has_state(LOOP_BREAKER) || _case_mask == 0) {
     return;
   }
 
-  std::visit(Functors{
-    // Case 1: Net arc
-    [this, net_delay_ready] (Net* net) {
-      if(net_delay_ready) return;
-      FOR_EACH_EL_RF(el, rf) {
-        _delay[el][rf][rf].reset();
-        const float slew = _from._slew[el][rf] ? float(*_from._slew[el][rf]) : 0.0f;
-        if(auto response = net->_response(el, rf, slew, _to)) {
-          _delay[el][rf][rf] = response->delay;
-        }
-      }
-    },
-    // Case 2: Cell arc
-    [this] (TimingView tv) {
-      FOR_EACH_EL_RF_RF_IF(el, frf, trf, (tv[el] && _from._slew[el][frf] && (_case_mask & (1U << (2 * frf + trf))))) {
-        auto lc = _effective_load[el][frf][trf];
-        auto si = *_from._slew[el][frf];
-        auto delay = tv[el]->delay(frf, trf, si, lc);
-        _delay[el][frf][trf] = delay;
-
-      }
-    }
-  }, _handle);
+  std::visit(
+      Functors{// Case 1: Net arc
+               [this](Net *net) {
+                 FOR_EACH_EL_RF(el, rf) {
+                   _set_delay(el, rf, rf, std::nullopt);
+                   const float slew =
+                       _from._slew[el][rf] ? float(*_from._slew[el][rf]) : 0.0f;
+                   if (auto response = net->_response(el, rf, slew, _to)) {
+                     _set_delay(el, rf, rf, response->delay);
+                   }
+                 }
+               },
+               // Case 2: Cell arc
+               [this](TimingView tv) {
+                 FOR_EACH_EL_RF_RF_IF(
+                     el, frf, trf,
+                     (tv[el] && _from._slew[el][frf] &&
+                      (_case_mask & (1U << (2 * frf + trf))))) {
+                   // Ideal-clock pins bypass slew fitting. Only transition
+                   // validity is needed here: Timer masks each present
+                   // ideal-edge delay to zero.
+                   const float lc = 0;
+                   auto si = *_from._slew[el][frf];
+                   auto delay = tv[el]->delay(frf, trf, si, lc);
+                   _set_delay(el, frf, trf, delay);
+                 }
+               }},
+      _handle);
 }
 
 // Procedure: _fprop_at
@@ -165,8 +169,10 @@ void Arc::_fprop_at() {
     return;
   }
 
-  FOR_EACH_EL_RF_RF_IF(el, frf, trf, _from._at[el][frf] && _delay[el][frf][trf]) {
-    _to._relax_at(this, el, frf, el, trf, *_delay[el][frf][trf] + *_from._at[el][frf]);
+  FOR_EACH_EL_RF_RF_IF(el, frf, trf,
+                       _from._at[el][frf] && delay(el, frf, trf)) {
+    _to._relax_at(this, el, frf, el, trf,
+                  *delay(el, frf, trf) + *_from._at[el][frf]);
   }
 }
 
@@ -177,50 +183,53 @@ void Arc::_bprop_rat() {
     return;
   }
 
-  std::visit(Functors{
-    // Case 1: Net arc
-    [this] (Net* net) {
-      FOR_EACH_EL_RF_IF(el, rf, _to._rat[el][rf] && _delay[el][rf][rf]) {
-        _from._relax_rat(this, el, rf, el, rf, *_to._rat[el][rf] - *_delay[el][rf][rf]);
-      }
-    },
-    // Case 2: Cell arc
-    [this] (TimingView tv) {
-
-      FOR_EACH_EL_RF_RF_IF(el, frf, trf, (tv[el] && (_case_mask & (1U << (2 * frf + trf))))) {
-        
-        // propagation arc
-        if(!tv[el]->is_constraint()) {
-          if(!_to._rat[el][trf] || !_delay[el][frf][trf]) {
-            continue;
-          }
-          _from._relax_rat(this, el, frf, el, trf, *_to._rat[el][trf] - *_delay[el][frf][trf]);
-        }
-        // constraint arc
-        else {
-          
-          if(!tv[el]->is_transition_defined(frf, trf)) {
-            continue;
-          }
-
-          if(el == MIN) {
-            auto at = _from._at[MAX][frf];
-            auto slack = _to.slack(MIN, trf);
-            if(at && slack) {
-              _from._relax_rat(this, MAX, frf, MIN, trf, *at + *slack);
+  std::visit(
+      Functors{
+          // Case 1: Net arc
+          [this](Net *net) {
+            FOR_EACH_EL_RF_IF(el, rf, _to._rat[el][rf] && delay(el, rf, rf)) {
+              _from._relax_rat(this, el, rf, el, rf,
+                               *_to._rat[el][rf] - *delay(el, rf, rf));
             }
-          }
-          else {
-            auto at = _from._at[MIN][frf];
-            auto slack = _to.slack(MAX, trf);
-            if(at && slack) {
-              _from._relax_rat(this, MIN, frf, MAX, trf, *at - *slack);
+          },
+          // Case 2: Cell arc
+          [this](TimingView tv) {
+            FOR_EACH_EL_RF_RF_IF(
+                el, frf, trf,
+                (tv[el] && (_case_mask & (1U << (2 * frf + trf))))) {
+
+              // propagation arc
+              if (!tv[el]->is_constraint()) {
+                if (!_to._rat[el][trf] || !delay(el, frf, trf)) {
+                  continue;
+                }
+                _from._relax_rat(this, el, frf, el, trf,
+                                 *_to._rat[el][trf] - *delay(el, frf, trf));
+              }
+              // constraint arc
+              else {
+
+                if (!tv[el]->is_transition_defined(frf, trf)) {
+                  continue;
+                }
+
+                if (el == MIN) {
+                  auto at = _from._at[MAX][frf];
+                  auto slack = _to.slack(MIN, trf);
+                  if (at && slack) {
+                    _from._relax_rat(this, MAX, frf, MIN, trf, *at + *slack);
+                  }
+                } else {
+                  auto at = _from._at[MIN][frf];
+                  auto slack = _to.slack(MAX, trf);
+                  if (at && slack) {
+                    _from._relax_rat(this, MIN, frf, MAX, trf, *at - *slack);
+                  }
+                }
+              }
             }
-          }
-        }
-      }
-    }
-  }, _handle);
+          }},
+      _handle);
 }
 
 // Procedure: _remove_state

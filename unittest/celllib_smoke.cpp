@@ -575,4 +575,187 @@ TEST_F(CelllibSmoke, IdealClockPreservesInversionDataRcAndCanRestorePropagation)
   EXPECT_EQ(timer.pins().at("f0:CLK").at(ot::MAX, ot::RISE), propagated);
   EXPECT_FALSE(timer.pins().at("f0:CLK").is_ideal_clock());
 }
+
+TEST_F(CelllibSmoke, ArcDelaysRefreshLoadsValidityAndIdealClockTransitions) {
+  write(R"lib(library(delay_storage) {
+    time_unit : "1ps"; capacitive_load_unit(1,ff);
+    lu_table_template(load) {
+      variable_1 : total_output_net_capacitance; index_1("0, 10");
+    }
+    cell(BUF) {
+      pin(A) { direction : input; capacitance : 1; }
+      pin(Y) { direction : output; function : "A";
+        timing() { related_pin : "A"; timing_sense : positive_unate;
+          cell_rise(load) { values("10, 20"); }
+          cell_fall(load) { values("20, 30"); }
+          rise_transition(scalar) { values("3"); }
+          fall_transition(scalar) { values("4"); }
+        }
+      }
+    }
+  })lib");
+  for (unsigned workers : {1U, 3U}) {
+    ot::Timer timer;
+    timer.set_num_threads(workers).read_celllib(path);
+    timer.insert_primary_input("a").insert_primary_output("y");
+    timer.insert_gate("buf", "BUF").insert_net("out");
+    timer.connect_pin("buf:A", "a").connect_pin("buf:Y", "out");
+    timer.disconnect_pin("y").connect_pin("y", "out");
+    for (auto split : {ot::MIN, ot::MAX}) {
+      for (auto tran : {ot::RISE, ot::FALL}) {
+        timer.set_at("a", split, tran, 0).set_slew("a", split, tran, 2);
+      }
+    }
+    timer.update_timing();
+    std::array<const ot::Arc *, 2> gate{};
+    for (const auto &arc : timer.arcs()) {
+      if (arc.is_cell_arc()) {
+        for (auto split : {ot::MIN, ot::MAX}) {
+          if (arc.timing_view()[split])
+            gate[split] = &arc;
+        }
+      }
+    }
+    ASSERT_NE(gate[ot::MIN], nullptr);
+    ASSERT_NE(gate[ot::MAX], nullptr);
+    for (auto model :
+         {ot::RcModel::elmore, ot::RcModel::effective_capacitance}) {
+      timer.set_rc_model(model);
+      for (float load : {2.f, 7.f, 2.f}) {
+        for (auto split : {ot::MIN, ot::MAX}) {
+          for (auto tran : {ot::RISE, ot::FALL})
+            timer.set_load("y", split, tran, load);
+        }
+        for (uint8_t mask : {15, 1, 0, 8, 15}) {
+          timer.set_case_masks({{"buf:A", "buf:Y", mask}}).update_timing();
+          for (auto split : {ot::MIN, ot::MAX}) {
+            for (auto from : {ot::RISE, ot::FALL}) {
+              for (auto to : {ot::RISE, ot::FALL}) {
+                const auto expected =
+                    from == to && (mask & (1U << (2 * from + to)))
+                        ? std::optional<float>((to == ot::RISE ? 10 : 20) +
+                                               load)
+                        : std::nullopt;
+                EXPECT_EQ(gate[split]->delay(split, from, to), expected);
+              }
+              const auto expected =
+                  (mask & (1U << (3 * from)))
+                      ? std::optional<float>((from == ot::RISE ? 10 : 20) +
+                                             load)
+                      : std::nullopt;
+              EXPECT_EQ(timer.report_at("y", split, from), expected);
+            }
+          }
+        }
+      }
+    }
+    timer.create_clock("clk", "a", 100)
+        .set_ideal_clocks({"clk"}, {"y"})
+        .update_timing();
+    for (auto split : {ot::MIN, ot::MAX}) {
+      EXPECT_EQ(gate[split]->delay(split, ot::RISE, ot::RISE), 0);
+      EXPECT_EQ(gate[split]->delay(split, ot::FALL, ot::FALL), 0);
+      EXPECT_FALSE(gate[split]->delay(split, ot::RISE, ot::FALL));
+      EXPECT_FALSE(gate[split]->delay(split, ot::FALL, ot::RISE));
+      EXPECT_EQ(timer.report_at("y", split, ot::RISE), 0);
+      EXPECT_EQ(timer.report_at("y", split, ot::FALL), 50);
+    }
+    timer.set_ideal_clocks({}).update_timing();
+    for (auto split : {ot::MIN, ot::MAX}) {
+      EXPECT_EQ(gate[split]->delay(split, ot::RISE, ot::RISE), 12);
+      EXPECT_EQ(gate[split]->delay(split, ot::FALL, ot::FALL), 22);
+      timer.set_slew("a", split, ot::RISE, std::nullopt);
+    }
+    timer.update_timing();
+    for (auto split : {ot::MIN, ot::MAX}) {
+      EXPECT_FALSE(gate[split]->delay(split, ot::RISE, ot::RISE));
+      EXPECT_EQ(gate[split]->delay(split, ot::FALL, ot::FALL), 22);
+    }
+  }
+}
+
+TEST_F(CelllibSmoke, SharedCornerArcsPreserveTablesMasksAndReplacement) {
+  const auto timing = [](std::string pin, int delay, bool condition) {
+    return "timing() { related_pin : \"" + pin +
+           "\"; timing_sense : positive_unate; " +
+           (condition ? "when : \"A\"; " : "") +
+           "cell_rise(scalar) { values(\"" + std::to_string(delay) + "\"); } " +
+           "cell_fall(scalar) { values(\"" + std::to_string(delay + 1) +
+           "\"); } " +
+           "rise_transition(scalar) { values(\"2\"); } fall_transition(scalar) "
+           "{ values(\"3\"); } }";
+  };
+  const auto library = [&](int offset, bool reverse, bool condition) {
+    std::string body =
+        "library(corners) { time_unit : \"1ps\"; capacitive_load_unit(1,ff); ";
+    for (auto name : {std::string("JOIN"), std::string("JOIN2")}) {
+      const int bias = offset + (name == "JOIN2" ? 7 : 0);
+      const auto a = timing("A", bias + 10, false),
+                 b = timing("B", bias + 20, condition);
+      body += "cell(" + name +
+              ") { pin(A) { direction : input; capacitance : 1; } "
+              "pin(B) { direction : input; capacitance : 1; } "
+              "pin(Y) { direction : output; function : \"A | B\"; " +
+              (reverse ? b + a : a + b) + "} } ";
+    }
+    return body + "}";
+  };
+  struct ExtraFile {
+    std::filesystem::path path;
+    ~ExtraFile() { std::filesystem::remove(path); }
+  } late{path.string() + ".late"};
+  // Different tables can share an arc. Different authored order or conditions
+  // must retain separate arcs even when both connect the same pins.
+  for (int mismatch : {0, 1, 2}) {
+    write(library(0, false, false));
+    std::ofstream(late.path) << library(100, mismatch == 1, mismatch == 2);
+    for (unsigned workers : {1U, 3U}) {
+      ot::Timer timer;
+      timer.set_num_threads(workers)
+          .read_celllib(path, ot::MIN)
+          .read_celllib(late.path, ot::MAX);
+      timer.insert_primary_input("a")
+          .insert_primary_input("b")
+          .insert_primary_output("y");
+      timer.insert_gate("g", "JOIN").insert_net("out");
+      timer.connect_pin("g:A", "a")
+          .connect_pin("g:B", "b")
+          .connect_pin("g:Y", "out");
+      timer.disconnect_pin("y").connect_pin("y", "out");
+      for (auto split : {ot::MIN, ot::MAX}) {
+        for (auto tran : {ot::RISE, ot::FALL}) {
+          for (auto input : {"a", "b"})
+            timer.set_at(input, split, tran, 0).set_slew(input, split, tran, 2);
+        }
+      }
+      timer.update_timing();
+      size_t cell_arcs = 0, paired = 0;
+      for (const auto &arc : timer.arcs()) {
+        if (!arc.is_cell_arc())
+          continue;
+        ++cell_arcs;
+        paired += arc.timing_view()[ot::MIN] && arc.timing_view()[ot::MAX];
+      }
+      EXPECT_EQ(cell_arcs, mismatch ? 4u : 2u);
+      EXPECT_EQ(paired, mismatch ? 0u : 2u);
+      for (auto tran : {ot::RISE, ot::FALL}) {
+        EXPECT_EQ(timer.report_at("y", ot::MIN, tran), 10 + tran);
+        EXPECT_EQ(timer.report_at("y", ot::MAX, tran), 120 + tran);
+      }
+      timer.set_case_masks({{"g:B", "g:Y", 0}}).update_timing();
+      timer.repower_gate("g", "JOIN2").update_timing();
+      for (auto tran : {ot::RISE, ot::FALL}) {
+        EXPECT_EQ(timer.report_at("y", ot::MIN, tran), 17 + tran);
+        EXPECT_EQ(timer.report_at("y", ot::MAX, tran), 117 + tran);
+      }
+      timer.set_case_masks({}).update_timing();
+      for (auto tran : {ot::RISE, ot::FALL}) {
+        EXPECT_EQ(timer.report_at("y", ot::MIN, tran), 17 + tran);
+        EXPECT_EQ(timer.report_at("y", ot::MAX, tran), 127 + tran);
+      }
+      timer.remove_gate("g").update_timing();
+      EXPECT_TRUE(timer.arcs().empty());
+    }
+  }
+}
 }  // namespace

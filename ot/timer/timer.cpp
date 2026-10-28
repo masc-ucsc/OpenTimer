@@ -341,24 +341,44 @@ void Timer::_insert_gate_arcs(Gate& gate) {
 
   assert(gate._tests.empty() && gate._arcs.empty());
 
+  // Share a propagation arc only when the complete authored sequence agrees
+  // across corners. Matching by endpoint alone could reorder conditional
+  // alternatives and change equal-delay path provenance. Constraints retain
+  // their separate setup/hold records and corner-specific filtering.
+  const auto shared_sequence = [&](const Cellpin *early, const Cellpin *late) {
+    if (!early || !late || early->timings.size() != late->timings.size())
+      return false;
+    for (size_t i = 0; i < early->timings.size(); ++i) {
+      const auto &a = early->timings[i];
+      const auto &b = late->timings[i];
+      if (a.is_constraint() || b.is_constraint() ||
+          _is_redundant_timing(a, MIN) || _is_redundant_timing(b, MAX) ||
+          a.related_pin != b.related_pin || a.type != b.type ||
+          a.sense != b.sense || a.when != b.when)
+        return false;
+    }
+    return true;
+  };
   FOR_EACH_EL(el) {
-    for(const auto& [cpname, cp] : gate._cell[el]->cellpins) {
+    for (const auto &[cpname, cp] : gate._cell[el]->cellpins) {
+      const auto *early = gate._cell[MIN]->cellpin(cpname);
+      const auto *late = gate._cell[MAX]->cellpin(cpname);
+      const bool shared = shared_sequence(early, late);
+      if (shared && el == MAX)
+        continue;
       auto& to_pin = _insert_pin(gate._name + ':' + cpname);
-
-      for(const auto& tm : cp.timings) {
-
-        if(_is_redundant_timing(tm, el)) {
+      for (size_t i = 0; i < cp.timings.size(); ++i) {
+        const auto &tm = cp.timings[i];
+        if (_is_redundant_timing(tm, el))
           continue;
-        }
-
         TimingView tv{nullptr, nullptr};
         tv[el] = &tm;
-
+        if (shared)
+          tv[MAX] = &late->timings[i];
         auto& from_pin = _insert_pin(gate._name + ':' + tm.related_pin);
         auto& arc = _insert_arc(from_pin, to_pin, tv);
-        
         gate._arcs.push_back(&arc);
-        if(tm.is_constraint()) {
+        if (tm.is_constraint()) {
           auto& test = _insert_test(arc);
           gate._tests.push_back(&test);
         }
@@ -950,8 +970,8 @@ void Timer::_fprop_rc_timing(Pin& pin) {
 
 // Procedure: _fprop_slew
 void Timer::_fprop_slew(Pin& pin) {
-  // Clear both parts before the paired slew/delay propagation. Net arcs save
-  // their waveform delay while propagating slew, avoiding a second solve.
+  // Clear both parts before the paired slew/delay propagation. Each arc
+  // consumes its fitted load and saves its delay while propagating slew.
   for(auto arc : pin._fanin) {
     arc->_reset_delay();
   }
@@ -1040,7 +1060,8 @@ void Timer::_fprop_delay(Pin& pin) {
       if(!arc->_from._ideal_clock) { arc->_reset_delay(); continue; }
       // Preserve valid transition pairs and timing sense (including inversion).
       for(auto el : {MIN, MAX}) for(auto frf : {RISE, FALL}) for(auto trf : {RISE, FALL})
-        if(arc->_delay[el][frf][trf]) arc->_delay[el][frf][trf] = 0.0f;
+            if (arc->delay(el, frf, trf))
+              arc->_set_delay(el, frf, trf, 0.0f);
     }
   }
 }
